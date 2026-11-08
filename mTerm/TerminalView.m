@@ -347,17 +347,31 @@ static NSColor *Color(uint32_t rgb) {
 - (void)drawRect:(NSRect)dirty {
     [Color(0x161616) setFill];
     NSRectFill(dirty);
+    NSRange selection = NSMakeRange(0, 0);
+    if (_anchor >= 0 && _focus >= 0) {
+        NSInteger first = MIN(_anchor, _focus), last = MAX(_anchor, _focus);
+        MTPaint edge;
+        if (!mt_cell(_parser, first/_cols, first%_cols, &edge) && first%_cols > 0) first--;
+        if (mt_cell(_parser, last/_cols, last%_cols, &edge) && edge.wide && last%_cols + 1 < _cols) last++;
+        selection = NSMakeRange(first, last - first + 1);
+    }
     for (uint16_t row = 0; row < _rows; row++) {
         @autoreleasepool {
+            NSUInteger rowStart = row * _cols;
+            NSRange highlight = NSIntersectionRange(selection, NSMakeRange(rowStart, _cols));
+            if (highlight.length) {
+                [NSColor.selectedTextBackgroundColor setFill];
+                NSRectFill(NSMakeRect(inset + (highlight.location - rowStart) * _cw,
+                                      inset + row * _ch, highlight.length * _cw, _ch));
+            }
             for (uint16_t col = 0; col < _cols; col++) {
                 MTPaint cell;
                 if (!mt_cell(_parser,row,col,&cell)) continue;
                 CGRect rect = CGRectMake(inset+col*_cw,inset+row*_ch,_cw*(cell.wide ? 2 : 1),_ch);
                 if (!CGRectIntersectsRect(rect,dirty)) continue;
-                NSInteger index = row*_cols+col;
-                BOOL selected = _focus >= 0 && index >= MIN(_anchor,_focus) && index <= MAX(_anchor,_focus);
-                if (selected || cell.bg != 0x161616) {
-                    [(selected ? NSColor.selectedTextBackgroundColor : Color(cell.bg)) setFill];
+                BOOL selected = NSLocationInRange(rowStart + col, highlight);
+                if (!selected && cell.bg != 0x161616) {
+                    [Color(cell.bg) setFill];
                     NSRectFill(rect);
                 }
                 if (!cell.len) continue;
