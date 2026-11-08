@@ -331,9 +331,21 @@ static const NSInteger maximumFontSize = 72;
     if ([self applicationTracks:event]) [self reportEvent:event button:3 release:NO motion:YES];
 }
 
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    if ([self applicationTracks:event]) return nil;
+    [self.window makeKeyWindow];
+    [self.window makeFirstResponder:self];
+    id<MTTerminalMenuProvider> provider = (id)self.window.delegate;
+    return [provider respondsToSelector:@selector(menuForTerminal:)] ? [provider menuForTerminal:self] : [super menuForEvent:event];
+}
+
 - (void)rightMouseDown:(NSEvent *)event {
+    [self.window makeFirstResponder:self];
     if ([self applicationTracks:event]) [self reportEvent:event button:2 release:NO motion:NO];
-    else [super rightMouseDown:event];
+    else {
+        NSMenu *menu = [self menuForEvent:event];
+        if (menu) [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+    }
 }
 - (void)rightMouseDragged:(NSEvent *)event {
     if ([self applicationTracks:event]) [self reportEvent:event button:2 release:NO motion:YES];
@@ -363,6 +375,20 @@ static const NSInteger maximumFontSize = 72;
     mt_scroll(_parser, delta > 0 ? lines : -lines);
     _anchor = _focus = -1;
     self.needsDisplay = YES;
+}
+
+- (void)selectVisibleText:(id)sender {
+    _anchor = 0;
+    _focus = (NSInteger)_rows * _cols - 1;
+    self.needsDisplay = YES;
+    [self copy:sender];
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(copy:)) return _focus >= 0 && _anchor >= 0;
+    if (item.action == @selector(paste:)) return _fd >= 0 &&
+        [NSPasteboard.generalPasteboard availableTypeFromArray:@[NSPasteboardTypeString]] != nil;
+    return YES;
 }
 
 - (void)copy:(id)sender {
@@ -447,5 +473,9 @@ static const NSInteger maximumFontSize = 72;
     if (_status) [_status drawAtPoint:NSMakePoint(inset,NSMaxY(self.bounds)-_ch)
                        withAttributes:@{NSForegroundColorAttributeName:[palette color:MTForeground],
                                         NSBackgroundColorAttributeName:[palette color:MTBackground]}];
+    if ([self.superview isKindOfClass:NSSplitView.class] && self.window.firstResponder != self) {
+        [[NSColor colorWithWhite:0.5 alpha:0.32] setFill];
+        NSRectFillUsingOperation(dirty, NSCompositingOperationSourceOver);
+    }
 }
 @end

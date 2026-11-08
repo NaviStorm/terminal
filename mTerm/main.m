@@ -4,7 +4,7 @@
 
 static NSString *const terminalFrameName = @"TerminalWindow";
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSSplitViewDelegate, NSMenuItemValidation>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSSplitViewDelegate, NSMenuItemValidation, MTTerminalMenuProvider>
 @end
 
 @implementation AppDelegate {
@@ -46,7 +46,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [NSApp activateIgnoringOtherApps:YES];
 }
 
-- (void)openAlongside:(NSWindow *)parent {
+- (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
     NSWindow *window = [[NSWindow alloc] initWithContentRect:frame
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
@@ -60,7 +60,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     if (!parent && (_windows.count || ![window setFrameUsingName:terminalFrameName])) {
         [window center];
     }
-    TerminalView *view = [[TerminalView alloc] initWithFrame:window.contentView.bounds];
+    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.contentView.bounds];
     window.contentView = view;
     [_windows addObject:window];
     if (parent) {
@@ -70,6 +70,28 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [window makeFirstResponder:view];
     [window makeKeyAndOrderFront:nil];
     window.tabbingMode = NSWindowTabbingModeAutomatic;
+}
+
+- (NSMenu *)menuForTerminal:(TerminalView *)terminal {
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Session"];
+    [menu addItemWithTitle:@"Nouvelle fenêtre" action:@selector(newWindow:) keyEquivalent:@"n"].target = self;
+    [menu addItemWithTitle:@"Nouvel onglet" action:@selector(newTab:) keyEquivalent:@"t"].target = self;
+    [menu addItem:NSMenuItem.separatorItem];
+    [menu addItemWithTitle:@"Scinder verticalement" action:@selector(splitVertically:) keyEquivalent:@"d"].target = self;
+    NSMenuItem *horizontal = [menu addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
+    horizontal.target = self;
+    horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [menu addItemWithTitle:@"Déplacer le volet vers une nouvelle fenêtre" action:@selector(detachPane:) keyEquivalent:@""].target = self;
+    [menu addItem:NSMenuItem.separatorItem];
+    [menu addItemWithTitle:@"Copier" action:@selector(copy:) keyEquivalent:@"c"].target = terminal;
+    [menu addItemWithTitle:@"Coller" action:@selector(paste:) keyEquivalent:@"v"].target = terminal;
+    [menu addItemWithTitle:@"Sélectionner le texte visible" action:@selector(selectVisibleText:) keyEquivalent:@""].target = terminal;
+    [menu addItem:NSMenuItem.separatorItem];
+    NSMenu *profiles = [[NSMenu alloc] initWithTitle:@"Profil de couleurs"];
+    profiles.delegate = self;
+    [menu addItemWithTitle:profiles.title action:nil keyEquivalent:@""].submenu = profiles;
+    [menu addItemWithTitle:@"Fermer la session" action:@selector(closeSession:) keyEquivalent:@"w"].target = self;
+    return menu;
 }
 
 - (void)showSettings:(id)sender { MTShowColorSettings(); }
@@ -97,6 +119,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(splitVertically:) || item.action == @selector(splitHorizontally:) ||
         item.action == @selector(selectProfile:)) return [self activeTerminal] != nil;
+    if (item.action == @selector(detachPane:)) return [[self activeTerminal].superview isKindOfClass:NSSplitView.class];
     if (item.action == @selector(closeSession:)) return NSApp.keyWindow != nil;
     return YES;
 }
@@ -143,21 +166,33 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     return MAX(minimum, MIN(length - minimum, position));
 }
 
-- (void)closeSession:(id)sender {
-    TerminalView *current = [self activeTerminal];
-    NSWindow *window = NSApp.keyWindow;
+- (void)removePaneFromSplit:(TerminalView *)current {
+    NSWindow *window = current.window;
     NSSplitView *split = (NSSplitView *)current.superview;
-    if (![split isKindOfClass:NSSplitView.class]) {
-        [window performClose:sender];
-        return;
-    }
     NSView *remaining = split.subviews.firstObject == current ? split.subviews.lastObject : split.subviews.firstObject;
-    [current stopSession];
     [remaining removeFromSuperview];
+    [current removeFromSuperview];
     [self replacePane:split with:remaining inWindow:window];
     NSView *focus = remaining;
     while ([focus isKindOfClass:NSSplitView.class]) focus = focus.subviews.firstObject;
     [window makeFirstResponder:focus];
+}
+
+- (void)detachPane:(id)sender {
+    TerminalView *current = [self activeTerminal];
+    if (![current.superview isKindOfClass:NSSplitView.class]) return;
+    [self removePaneFromSplit:current];
+    [self openAlongside:nil movingTerminal:current];
+}
+
+- (void)closeSession:(id)sender {
+    TerminalView *current = [self activeTerminal];
+    if (![current.superview isKindOfClass:NSSplitView.class]) {
+        [NSApp.keyWindow performClose:sender];
+        return;
+    }
+    [current stopSession];
+    [self removePaneFromSplit:current];
 }
 
 - (void)stopSessionsInView:(NSView *)view {
@@ -165,8 +200,8 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     else for (NSView *child in view.subviews) [self stopSessionsInView:child];
 }
 
-- (void)newWindow:(id)sender { [self openAlongside:nil]; }
-- (void)newTab:(id)sender { [self openAlongside:[_windows containsObject:NSApp.keyWindow] ? NSApp.keyWindow : nil]; }
+- (void)newWindow:(id)sender { [self openAlongside:nil movingTerminal:nil]; }
+- (void)newTab:(id)sender { [self openAlongside:[_windows containsObject:NSApp.keyWindow] ? NSApp.keyWindow : nil movingTerminal:nil]; }
 - (void)newWindowForTab:(id)sender { [self newTab:sender]; }
 
 - (void)saveNormalFrame:(NSWindow *)window {
