@@ -53,15 +53,15 @@ static NSColor *Color(uint32_t rgb) {
     CGFloat cellHeight = ceil(font.ascender - font.descender + font.leading);
     NSWindow *window = self.window;
     NSRect frame = window.frame;
-    if (window && _parser) {
+    BOOL resizeWindow = window && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
+    if (resizeWindow) {
         CGFloat width = MAX(window.contentMinSize.width, ceil(2 * inset + _cols * cellWidth));
         CGFloat height = MAX(window.contentMinSize.height, ceil(2 * inset + _rows * cellHeight));
         // La différence inclut la barre de titre et, le cas échéant, les onglets.
         NSSize decoration = NSMakeSize(NSWidth(frame) - NSWidth(self.bounds),
                                        NSHeight(frame) - NSHeight(self.bounds));
         NSRect visible = (window.screen ?: NSScreen.mainScreen).visibleFrame;
-        if ((window.styleMask & NSWindowStyleMaskFullScreen) ||
-            width + decoration.width > NSWidth(visible) ||
+        if (width + decoration.width > NSWidth(visible) ||
             floor((width - 2 * inset) / cellWidth) != _cols) {
             NSBeep();
             return;
@@ -76,7 +76,7 @@ static NSColor *Color(uint32_t rgb) {
     _bold = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightBold];
     _cw = cellWidth;
     _ch = cellHeight;
-    if (window && _parser) [window setFrame:frame display:YES];
+    if (resizeWindow) [window setFrame:frame display:YES];
     [self resizeGrid];
     self.needsDisplay = YES;
 }
