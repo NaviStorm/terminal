@@ -4,7 +4,7 @@
 
 static NSString *const terminalFrameName = @"TerminalWindow";
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSSplitViewDelegate, NSMenuItemValidation, MTTerminalMenuProvider>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSSplitViewDelegate, NSMenuItemValidation, MTTerminalWindowDelegate>
 @end
 
 @implementation AppDelegate {
@@ -169,10 +169,15 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 - (void)removePaneFromSplit:(TerminalView *)current {
     NSWindow *window = current.window;
     NSSplitView *split = (NSSplitView *)current.superview;
+    NSResponder *previousFocus = window.firstResponder;
     NSView *remaining = split.subviews.firstObject == current ? split.subviews.lastObject : split.subviews.firstObject;
     [remaining removeFromSuperview];
     [current removeFromSuperview];
     [self replacePane:split with:remaining inWindow:window];
+    if ([previousFocus isKindOfClass:TerminalView.class] && previousFocus != current) {
+        [window makeFirstResponder:previousFocus];
+        return;
+    }
     NSView *focus = remaining;
     while ([focus isKindOfClass:NSSplitView.class]) focus = focus.subviews.firstObject;
     [window makeFirstResponder:focus];
@@ -185,14 +190,22 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [self openAlongside:nil movingTerminal:current];
 }
 
+- (void)terminalSessionDidEnd:(TerminalView *)terminal {
+    if ([terminal.superview isKindOfClass:NSSplitView.class]) {
+        [self removePaneFromSplit:terminal];
+    } else if (terminal.window.contentView == terminal) {
+        [terminal.window close];
+    }
+}
+
 - (void)closeSession:(id)sender {
     TerminalView *current = [self activeTerminal];
-    if (![current.superview isKindOfClass:NSSplitView.class]) {
+    if (current) {
+        [current stopSession];
+        [self terminalSessionDidEnd:current];
+    } else {
         [NSApp.keyWindow performClose:sender];
-        return;
     }
-    [current stopSession];
-    [self removePaneFromSplit:current];
 }
 
 - (void)stopSessionsInView:(NSView *)view {

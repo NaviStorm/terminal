@@ -159,13 +159,14 @@ static const NSInteger maximumFontSize = 72;
     _fd = fd;
     fcntl(fd, F_SETFD, FD_CLOEXEC);
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    __weak TerminalView *weakSelf = self;
     dispatch_source_t child = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, pid, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
     dispatch_source_set_event_handler(child, ^{
         while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
         dispatch_source_cancel(child);
+        [weakSelf finishSession];
     });
     dispatch_resume(child);
-    __weak TerminalView *weakSelf = self;
     _reader = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, dispatch_get_main_queue());
     dispatch_source_set_event_handler(_reader, ^{ [weakSelf readOutput]; });
     _writer = dispatch_source_create(DISPATCH_SOURCE_TYPE_WRITE, fd, 0, dispatch_get_main_queue());
@@ -187,10 +188,15 @@ static const NSInteger maximumFontSize = 72;
         mt_feed(_parser, bytes, count);
         self.needsDisplay = YES;
     } else if (count == 0 || (errno != EINTR && errno != EAGAIN)) {
-        _status = @"Session terminée";
-        [self stopSession];
-        self.needsDisplay = YES;
+        [self finishSession];
     }
+}
+
+- (void)finishSession {
+    if (_fd < 0) return;
+    [self stopSession];
+    id<MTTerminalWindowDelegate> delegate = (id)self.window.delegate;
+    [delegate terminalSessionDidEnd:self];
 }
 
 - (void)stopSession {
@@ -213,9 +219,7 @@ static const NSInteger maximumFontSize = 72;
     ssize_t count = write(_fd, bytes + _sent, _pending.length - _sent);
     if (count < 0) {
         if (errno != EINTR && errno != EAGAIN) {
-            _status = @"Connexion au terminal interrompue.";
-            [self stopSession];
-            self.needsDisplay = YES;
+            [self finishSession];
         }
         return;
     }
@@ -335,7 +339,7 @@ static const NSInteger maximumFontSize = 72;
     if ([self applicationTracks:event]) return nil;
     [self.window makeKeyWindow];
     [self.window makeFirstResponder:self];
-    id<MTTerminalMenuProvider> provider = (id)self.window.delegate;
+    id<MTTerminalWindowDelegate> provider = (id)self.window.delegate;
     return [provider respondsToSelector:@selector(menuForTerminal:)] ? [provider menuForTerminal:self] : [super menuForEvent:event];
 }
 

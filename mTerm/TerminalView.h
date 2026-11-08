@@ -8,6 +8,7 @@
 - (void)selectVisibleText:(id)sender;
 @end
 
-@protocol MTTerminalMenuProvider <NSObject>
+@protocol MTTerminalWindowDelegate <NSObject>
+- (void)terminalSessionDidEnd:(TerminalView *)terminal;
 - (NSMenu *)menuForTerminal:(TerminalView *)terminal;
 @end
