@@ -6,6 +6,10 @@
 #import <sys/ioctl.h>
 
 static const CGFloat inset = 8;
+static NSString *const fontSizeKey = @"TerminalFontSize";
+static const NSInteger minimumFontSize = 6;
+static const NSInteger maximumFontSize = 72;
+
 static NSColor *Color(uint32_t rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 255) / 255.0
                                green:((rgb >> 8) & 255) / 255.0
@@ -34,7 +38,9 @@ static NSColor *Color(uint32_t rgb) {
         _fd = -1;
         _lastMouseCell = -1;
         _anchor = _focus = -1;
-        [self setTerminalFontSize:14];
+        NSInteger size = [NSUserDefaults.standardUserDefaults integerForKey:fontSizeKey];
+        if (size < minimumFontSize || size > maximumFontSize) size = 14;
+        [self setTerminalFontSize:size savePreference:NO];
         _parser = mt_new(1, 1);
         [self resizeGrid];
         [self startSession];
@@ -46,7 +52,7 @@ static NSColor *Color(uint32_t rgb) {
 - (BOOL)isOpaque { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
 
-- (void)setTerminalFontSize:(CGFloat)size {
+- (void)setTerminalFontSize:(CGFloat)size savePreference:(BOOL)savePreference {
     if (_font.pointSize == size) return;
     NSFont *font = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightRegular];
     CGFloat cellWidth = [@"M" sizeWithAttributes:@{NSFontAttributeName:font}].width;
@@ -76,13 +82,14 @@ static NSColor *Color(uint32_t rgb) {
     _bold = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightBold];
     _cw = cellWidth;
     _ch = cellHeight;
+    if (savePreference) [NSUserDefaults.standardUserDefaults setInteger:(NSInteger)size forKey:fontSizeKey];
     if (resizeWindow) [window setFrame:frame display:YES];
     [self resizeGrid];
     self.needsDisplay = YES;
 }
 
-- (void)increaseFont:(id)sender { [self setTerminalFontSize:MIN(72, _font.pointSize + 1)]; }
-- (void)decreaseFont:(id)sender { [self setTerminalFontSize:MAX(6, _font.pointSize - 1)]; }
+- (void)increaseFont:(id)sender { [self setTerminalFontSize:MIN(maximumFontSize, _font.pointSize + 1) savePreference:YES]; }
+- (void)decreaseFont:(id)sender { [self setTerminalFontSize:MAX(minimumFontSize, _font.pointSize - 1) savePreference:YES]; }
 
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
     NSEventModifierFlags flags = event.modifierFlags;
