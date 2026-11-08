@@ -18,6 +18,9 @@ void mt_resize(MTParser *, uint16_t rows, uint16_t cols);
 void mt_scroll(MTParser *, int32_t delta);
 bool mt_application_cursor(MTParser *);
 bool mt_bracketed_paste(MTParser *);
+bool mt_mouse_enabled(MTParser *);
+size_t mt_mouse_report(MTParser *, uint8_t button, bool release, bool motion,
+                       uint8_t modifiers, uint16_t row, uint16_t col, uint8_t out[32]);
 bool mt_cursor(MTParser *, uint16_t *row, uint16_t *col);
 // Les octets restent valides jusqu'à la prochaine mutation du parseur.
 bool mt_cell(MTParser *, uint16_t row, uint16_t col, MTPaint *);

@@ -22,6 +22,10 @@
     [bar addItemWithTitle:@"Édition" action:nil keyEquivalent:@""].submenu = edit;
     [edit addItemWithTitle:@"Copier" action:@selector(copy:) keyEquivalent:@"c"];
     [edit addItemWithTitle:@"Coller" action:@selector(paste:) keyEquivalent:@"v"];
+    NSMenu *view = [[NSMenu alloc] initWithTitle:@"Présentation"];
+    [bar addItemWithTitle:@"Présentation" action:nil keyEquivalent:@""].submenu = view;
+    [view addItemWithTitle:@"Agrandir la police" action:@selector(increaseFont:) keyEquivalent:@"+"];
+    [view addItemWithTitle:@"Réduire la police" action:@selector(decreaseFont:) keyEquivalent:@"-"];
     NSApp.mainMenu = bar;
     _windows = [NSMutableSet set];
     [self newWindow:nil];

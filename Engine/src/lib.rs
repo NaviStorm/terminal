@@ -46,6 +46,70 @@ extern "C" fn mt_cursor(p: &Parser, row: &mut u16, col: &mut u16) -> bool {
     !p.screen().hide_cursor() && p.screen().scrollback() == 0
 }
 
+#[no_mangle]
+extern "C" fn mt_mouse_enabled(p: &Parser) -> bool {
+    p.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+}
+
+// Boutons xterm : gauche, milieu, droit, aucun, puis molette 64/65.
+#[no_mangle]
+extern "C" fn mt_mouse_report(
+    p: &Parser,
+    button: u8,
+    release: bool,
+    motion: bool,
+    modifiers: u8,
+    row: u16,
+    col: u16,
+    out: &mut [u8; 32],
+) -> usize {
+    use vt100::{MouseProtocolEncoding as Encoding, MouseProtocolMode as Mode};
+    let mode = p.screen().mouse_protocol_mode();
+    if mode == Mode::None
+        || (release && mode == Mode::Press)
+        || (motion && !(mode == Mode::AnyMotion || (mode == Mode::ButtonMotion && button < 3)))
+    {
+        return 0;
+    }
+    let encoding = p.screen().mouse_protocol_encoding();
+    let mut code = if release && encoding != Encoding::Sgr {
+        3
+    } else {
+        button
+    };
+    if mode != Mode::Press {
+        code |= modifiers;
+    }
+    if motion {
+        code |= 32;
+    }
+    let x = u32::from(col) + 1;
+    let y = u32::from(row) + 1;
+    if encoding == Encoding::Sgr {
+        use std::io::Write;
+        let mut dest = &mut out[..];
+        let suffix = if release { 'm' } else { 'M' };
+        write!(dest, "\x1b[<{code};{x};{y}{suffix}").unwrap();
+        return 32 - dest.len();
+    }
+    out[..4].copy_from_slice(&[27, b'[', b'M', 32 + code]);
+    let mut len = 4;
+    for coord in [x, y] {
+        if encoding == Encoding::Utf8 && coord <= 2015 {
+            len += char::from_u32(coord + 32)
+                .unwrap()
+                .encode_utf8(&mut out[len..])
+                .len();
+        } else if coord <= 223 {
+            out[len] = (coord + 32) as u8;
+            len += 1;
+        } else {
+            return 0;
+        }
+    }
+    len
+}
+
 fn rgb(color: Color, default: u32) -> u32 {
     const PALETTE: [u32; 16] = [
         0x161616, 0xb64040, 0x419849, 0xc09835, 0x527dcc, 0xa458ac, 0x389696, 0xc8c8c8, 0x747474,
@@ -111,6 +175,27 @@ unsafe extern "C" fn mt_string_free(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mouse_modes_and_wire_encodings() {
+        let mut p = Parser::new(24, 240, 0);
+        let mut out = [0; 32];
+        assert!(!mt_mouse_enabled(&p));
+        p.process(b"\x1b[?1000h");
+        let len = mt_mouse_report(&p, 0, false, false, 4, 1, 200, &mut out);
+        assert_eq!(&out[..len], &[27, 91, 77, 36, 233, 34]);
+        assert_eq!(mt_mouse_report(&p, 0, false, true, 0, 1, 2, &mut out), 0);
+        p.process(b"\x1b[?1005h");
+        let len = mt_mouse_report(&p, 0, true, false, 0, 1, 200, &mut out);
+        assert_eq!(&out[..len], &[27, 91, 77, 35, 195, 169, 34]);
+        p.process(b"\x1b[?1006h\x1b[?1002h");
+        let len = mt_mouse_report(&p, 0, false, true, 0, 1, 200, &mut out);
+        assert_eq!(&out[..len], b"\x1b[<32;201;2M");
+        let len = mt_mouse_report(&p, 2, true, false, 0, 1, 2, &mut out);
+        assert_eq!(&out[..len], b"\x1b[<2;3;2m");
+        p.process(b"\x1b[?1003h");
+        let len = mt_mouse_report(&p, 3, false, true, 0, 1, 2, &mut out);
+        assert_eq!(&out[..len], b"\x1b[<35;3;2M");
+    }
     #[test]
     fn streaming_history_and_alternate_screen() {
         let mut p = Parser::new(2, 8, 1000);

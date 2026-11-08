@@ -23,17 +23,18 @@ static NSColor *Color(uint32_t rgb) {
     NSMutableData *_pending;
     NSUInteger _sent;
     NSInteger _anchor, _focus;
+    NSInteger _lastMouseCell;
+    BOOL _localDrag;
+    NSTrackingArea *_tracking;
     NSString *_status;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         _fd = -1;
+        _lastMouseCell = -1;
         _anchor = _focus = -1;
-        _font = [NSFont monospacedSystemFontOfSize:14 weight:NSFontWeightRegular];
-        _bold = [NSFont monospacedSystemFontOfSize:14 weight:NSFontWeightBold];
-        _cw = [@"M" sizeWithAttributes:@{NSFontAttributeName:_font}].width;
-        _ch = ceil(_font.ascender - _font.descender + _font.leading);
+        [self setTerminalFontSize:14];
         _parser = mt_new(1, 1);
         [self resizeGrid];
         [self startSession];
@@ -44,6 +45,28 @@ static NSColor *Color(uint32_t rgb) {
 - (BOOL)isFlipped { return YES; }
 - (BOOL)isOpaque { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
+
+- (void)setTerminalFontSize:(CGFloat)size {
+    _font = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightRegular];
+    _bold = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightBold];
+    _cw = [@"M" sizeWithAttributes:@{NSFontAttributeName:_font}].width;
+    _ch = ceil(_font.ascender - _font.descender + _font.leading);
+    [self resizeGrid];
+    self.needsDisplay = YES;
+}
+
+- (void)increaseFont:(id)sender { [self setTerminalFontSize:MIN(72, _font.pointSize + 1)]; }
+- (void)decreaseFont:(id)sender { [self setTerminalFontSize:MAX(6, _font.pointSize - 1)]; }
+
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    NSEventModifierFlags flags = event.modifierFlags;
+    if ((flags & NSEventModifierFlagCommand) && !(flags & (NSEventModifierFlagControl | NSEventModifierFlagOption))) {
+        NSString *key = event.charactersIgnoringModifiers;
+        if ([@[@"+", @"=", @"/"] containsObject:key]) { [self increaseFont:nil]; return YES; }
+        if ([@[@"-", @"_"] containsObject:key]) { [self decreaseFont:nil]; return YES; }
+    }
+    return [super performKeyEquivalent:event];
+}
 
 - (void)resizeGrid {
     if (!_parser) return;
@@ -171,8 +194,13 @@ static NSColor *Color(uint32_t rgb) {
     mt_scroll(_parser, INT32_MIN);
     _anchor = _focus = -1;
     self.needsDisplay = YES;
+    [self enqueueInput:[text dataUsingEncoding:NSUTF8StringEncoding]];
+}
+
+- (void)enqueueInput:(NSData *)data {
+    if (!data.length || _fd < 0) return;
     if (!_pending) _pending = [NSMutableData data];
-    [_pending appendData:[text dataUsingEncoding:NSUTF8StringEncoding]];
+    [_pending appendData:data];
     if (!_writing) {
         _writing = YES;
         dispatch_resume(_writer);
@@ -205,22 +233,94 @@ static NSColor *Color(uint32_t rgb) {
     return row * _cols + col;
 }
 
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_tracking) [self removeTrackingArea:_tracking];
+    _tracking = [[NSTrackingArea alloc] initWithRect:NSZeroRect
+        options:NSTrackingInVisibleRect | NSTrackingActiveInKeyWindow | NSTrackingMouseMoved
+        owner:self userInfo:nil];
+    [self addTrackingArea:_tracking];
+}
+
+- (BOOL)applicationTracks:(NSEvent *)event {
+    return mt_mouse_enabled(_parser) && !(event.modifierFlags & NSEventModifierFlagOption);
+}
+
+- (void)reportEvent:(NSEvent *)event button:(uint8_t)button release:(BOOL)release motion:(BOOL)motion {
+    NSInteger cell = [self cellAt:event];
+    if (motion && cell == _lastMouseCell) return;
+    uint8_t modifiers = (event.modifierFlags & NSEventModifierFlagShift ? 4 : 0) |
+                        (event.modifierFlags & NSEventModifierFlagControl ? 16 : 0);
+    uint8_t bytes[32];
+    size_t len = mt_mouse_report(_parser, button, release, motion, modifiers, cell/_cols, cell%_cols, bytes);
+    if (len) {
+        _lastMouseCell = cell;
+        [self enqueueInput:[NSData dataWithBytes:bytes length:len]];
+    }
+}
+
 - (void)mouseDown:(NSEvent *)event {
     [self.window makeFirstResponder:self];
-    _anchor = [self cellAt:event];
+    _localDrag = ![self applicationTracks:event];
+    _anchor = _localDrag ? [self cellAt:event] : -1;
     _focus = -1;
+    if (!_localDrag) [self reportEvent:event button:0 release:NO motion:NO];
     self.needsDisplay = YES;
 }
 
 - (void)mouseDragged:(NSEvent *)event {
-    _focus = [self cellAt:event];
-    self.needsDisplay = YES;
+    if (_localDrag) {
+        _focus = [self cellAt:event];
+        self.needsDisplay = YES;
+    } else {
+        [self reportEvent:event button:0 release:NO motion:YES];
+    }
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    if (_localDrag && _focus >= 0 && _anchor >= 0) {
+        _focus = [self cellAt:event];
+        [self copy:nil];
+        self.needsDisplay = YES;
+    } else if (!_localDrag) {
+        [self reportEvent:event button:0 release:YES motion:NO];
+    }
+    _localDrag = NO;
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    if ([self applicationTracks:event]) [self reportEvent:event button:3 release:NO motion:YES];
+}
+
+- (void)rightMouseDown:(NSEvent *)event {
+    if ([self applicationTracks:event]) [self reportEvent:event button:2 release:NO motion:NO];
+    else [super rightMouseDown:event];
+}
+- (void)rightMouseDragged:(NSEvent *)event {
+    if ([self applicationTracks:event]) [self reportEvent:event button:2 release:NO motion:YES];
+}
+- (void)rightMouseUp:(NSEvent *)event {
+    if ([self applicationTracks:event]) [self reportEvent:event button:2 release:YES motion:NO];
+}
+- (void)otherMouseDown:(NSEvent *)event {
+    if (event.buttonNumber == 2 && [self applicationTracks:event]) [self reportEvent:event button:1 release:NO motion:NO];
+}
+- (void)otherMouseDragged:(NSEvent *)event {
+    if (event.buttonNumber == 2 && [self applicationTracks:event]) [self reportEvent:event button:1 release:NO motion:YES];
+}
+- (void)otherMouseUp:(NSEvent *)event {
+    if (event.buttonNumber == 2 && [self applicationTracks:event]) [self reportEvent:event button:1 release:YES motion:NO];
 }
 
 - (void)scrollWheel:(NSEvent *)event {
     CGFloat delta = event.scrollingDeltaY;
     if (!delta) return;
     int lines = MAX(1, round(fabs(delta) / (event.hasPreciseScrollingDeltas ? _ch : 1)));
+    if ([self applicationTracks:event]) {
+        for (int i = 0; i < lines; i++)
+            [self reportEvent:event button:delta > 0 ? 64 : 65 release:NO motion:NO];
+        return;
+    }
     mt_scroll(_parser, delta > 0 ? lines : -lines);
     _anchor = _focus = -1;
     self.needsDisplay = YES;
@@ -230,8 +330,10 @@ static NSColor *Color(uint32_t rgb) {
     if (_focus < 0 || _anchor < 0) return;
     NSInteger a = MIN(_anchor,_focus), b = MAX(_anchor,_focus);
     char *text = mt_selection(_parser,a/_cols,a%_cols,b/_cols,b%_cols+1);
-    [NSPasteboard.generalPasteboard clearContents];
-    [NSPasteboard.generalPasteboard setString:@(text) forType:NSPasteboardTypeString];
+    if (*text) {
+        [NSPasteboard.generalPasteboard clearContents];
+        [NSPasteboard.generalPasteboard setString:@(text) forType:NSPasteboardTypeString];
+    }
     mt_string_free(text);
 }
 
