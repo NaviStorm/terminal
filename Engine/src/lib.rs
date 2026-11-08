@@ -1,10 +1,37 @@
 //! Le pointeur du parseur appartient à la vue AppKit, qui l'utilise sur le fil principal.
 use std::ffi::{c_char, CString};
-use vt100::{Color, Parser};
+use vt100::Color;
+
+#[derive(Default)]
+struct SessionInfo {
+    title: Option<CString>,
+}
+impl vt100::Callbacks for SessionInfo {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, bytes: &[u8]) {
+        let text: String = String::from_utf8_lossy(bytes)
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(256)
+            .collect();
+        self.title = Some(CString::new(text).unwrap_or_default());
+    }
+}
+type Parser = vt100::Parser<SessionInfo>;
+fn parser(rows: u16, cols: u16, history: usize) -> Parser {
+    Parser::new_with_callbacks(rows, cols, history, SessionInfo::default())
+}
 
 #[no_mangle]
-pub extern "C" fn mt_new(rows: u16, cols: u16) -> *mut Parser {
-    Box::into_raw(Box::new(Parser::new(rows.max(1), cols.max(1), 1000)))
+extern "C" fn mt_take_title(p: &mut Parser) -> *mut c_char {
+    p.callbacks_mut()
+        .title
+        .take()
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+#[no_mangle]
+extern "C" fn mt_new(rows: u16, cols: u16) -> *mut Parser {
+    Box::into_raw(Box::new(parser(rows.max(1), cols.max(1), 1000)))
 }
 
 #[no_mangle]
@@ -170,12 +197,155 @@ unsafe extern "C" fn mt_string_free(s: *mut c_char) {
     drop(CString::from_raw(s));
 }
 
+// Recherche en flux. La table de préfixes et les positions couvrent seulement la requête.
+fn find_text(
+    screen: &mut vt100::Screen,
+    query: &str,
+    start: i32,
+    reverse: bool,
+) -> Option<(i32, i32)> {
+    let pattern: Vec<char> = query.chars().collect();
+    if pattern.is_empty() {
+        return None;
+    }
+    let mut prefix = vec![0; pattern.len()];
+    let mut n = 0;
+    for i in 1..pattern.len() {
+        while n > 0 && pattern[n] != pattern[i] {
+            n = prefix[n - 1];
+        }
+        if pattern[n] == pattern[i] {
+            n += 1;
+        }
+        prefix[i] = n;
+    }
+    let (rows, cols) = screen.size();
+    let width = i32::from(cols);
+    let old_offset = screen.scrollback();
+    screen.set_scrollback(usize::MAX);
+    let history = screen.scrollback();
+    let origin = (history - old_offset) as i32 * width + start;
+    let mut positions = vec![0; pattern.len()];
+    let (mut matched, mut index) = (0, 0usize);
+    let (mut wrapped, mut next) = (None, None);
+    'rows: for line in 0..history + usize::from(rows) {
+        let offset = history.saturating_sub(line);
+        screen.set_scrollback(offset);
+        let row = line.saturating_sub(history) as u16;
+        for col in 0..cols {
+            let Some(cell) = screen.cell(row, col) else {
+                continue;
+            };
+            if cell.is_wide_continuation() {
+                continue;
+            }
+            let pos = line as i32 * width + i32::from(col);
+            let text = if cell.has_contents() {
+                cell.contents()
+            } else {
+                " "
+            };
+            for ch in text.chars() {
+                positions[index % pattern.len()] = pos;
+                index += 1;
+                while matched > 0 && pattern[matched] != ch {
+                    matched = prefix[matched - 1];
+                }
+                if pattern[matched] == ch {
+                    matched += 1;
+                }
+                if matched == pattern.len() {
+                    let first = positions[(index - pattern.len()) % pattern.len()];
+                    let hit = (first, pos + i32::from(cell.is_wide()));
+                    if reverse || wrapped.is_none() {
+                        wrapped = Some(hit);
+                    }
+                    if reverse && first < origin {
+                        next = Some(hit);
+                    }
+                    if !reverse && first > origin {
+                        next = Some(hit);
+                        break 'rows;
+                    }
+                    matched = prefix[matched - 1];
+                }
+            }
+        }
+        if !screen.row_wrapped(row) {
+            matched = 0;
+        }
+    }
+    if let Some((first, last)) = next.or(wrapped) {
+        let mut top = history - old_offset;
+        if first < top as i32 * width || last >= (top + usize::from(rows)) as i32 * width {
+            top = (first / width) as usize;
+            top = top.min(history);
+        }
+        screen.set_scrollback(history - top);
+        let base = top as i32 * width;
+        Some((first - base, (last - base).min(i32::from(rows) * width - 1)))
+    } else {
+        screen.set_scrollback(old_offset);
+        None
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn mt_find(
+    p: &mut Parser,
+    query: *const c_char,
+    start: i32,
+    reverse: bool,
+    first: &mut i32,
+    last: &mut i32,
+) -> bool {
+    let Ok(query) = std::ffi::CStr::from_ptr(query).to_str() else {
+        return false;
+    };
+    if let Some(result) = find_text(p.screen_mut(), query, start, reverse) {
+        (*first, *last) = result;
+        true
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn search_scrollback_wrapped_unicode_and_navigation() {
+        let mut p = parser(3, 8, 1000);
+        p.process("123456界été\r\naaaa\r\nfin\r\nfin\r\nfin".as_bytes());
+        let screen = p.screen_mut();
+        assert_eq!(find_text(screen, "界été", -1, false), Some((6, 10)));
+        assert!(screen.scrollback() > 0);
+        let offset = screen.scrollback();
+        assert_eq!(find_text(screen, "absent", -1, false), None);
+        assert_eq!(screen.scrollback(), offset);
+        assert_eq!(find_text(screen, "aa", -1, false), Some((16, 17)));
+        assert_eq!(find_text(screen, "aa", 16, false), Some((17, 18)));
+        assert_eq!(find_text(screen, "aa", 17, true), Some((16, 17)));
+        assert_eq!(find_text(screen, "aa", 16, true), Some((18, 19)));
+    }
+
+    #[test]
+    fn shell_title_can_be_split_replaced_and_cleared() {
+        let mut p = parser(1, 8, 0);
+        p.process(b"\x1b]0;D");
+        assert!(p.callbacks().title.is_none());
+        p.process("épôt\x07".as_bytes());
+        assert_eq!(
+            p.callbacks().title.as_ref().unwrap().to_str().unwrap(),
+            "Dépôt"
+        );
+        p.process(b"\x1b]2;\x1b\\");
+        assert!(p.callbacks().title.as_ref().unwrap().as_bytes().is_empty());
+    }
+
+    #[test]
     fn indexed_palette_rgb_and_reverse_video() {
-        let mut p = Parser::new(2, 8, 0);
+        let mut p = parser(2, 8, 0);
         p.process(b"\x1b[31mA\x1b[7mB\x1b[0;38;2;1;2;3mC\x1b[38;5;196mD");
         let mut paint = Paint {
             bytes: std::ptr::null(),
@@ -202,7 +372,7 @@ mod tests {
 
     #[test]
     fn mouse_modes_and_wire_encodings() {
-        let mut p = Parser::new(24, 240, 0);
+        let mut p = parser(24, 240, 0);
         let mut out = [0; 32];
         assert!(!mt_mouse_enabled(&p));
         p.process(b"\x1b[?1000h");
@@ -223,7 +393,7 @@ mod tests {
     }
     #[test]
     fn streaming_history_and_alternate_screen() {
-        let mut p = Parser::new(2, 8, 1000);
+        let mut p = parser(2, 8, 1000);
         for b in "un\r\ndeux\r\nété".as_bytes() {
             p.process(&[*b]);
         }

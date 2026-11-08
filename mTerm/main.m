@@ -42,6 +42,11 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [bar addItemWithTitle:@"Édition" action:nil keyEquivalent:@""].submenu = edit;
     [edit addItemWithTitle:@"Copier" action:@selector(copy:) keyEquivalent:@"c"];
     [edit addItemWithTitle:@"Coller" action:@selector(paste:) keyEquivalent:@"v"];
+    [edit addItem:NSMenuItem.separatorItem];
+    [edit addItemWithTitle:@"Rechercher…" action:@selector(findText:) keyEquivalent:@"f"];
+    [edit addItemWithTitle:@"Occurrence suivante" action:@selector(findNext:) keyEquivalent:@"g"];
+    NSMenuItem *previous = [edit addItemWithTitle:@"Occurrence précédente" action:@selector(findPrevious:) keyEquivalent:@"g"];
+    previous.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenu *view = [[NSMenu alloc] initWithTitle:@"Présentation"];
     [bar addItemWithTitle:@"Présentation" action:nil keyEquivalent:@""].submenu = view;
     [view addItemWithTitle:@"Agrandir la police" action:@selector(increaseFont:) keyEquivalent:@"+"];
@@ -70,7 +75,8 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     if (!parent && (_windows.count || ![window setFrameUsingName:terminalFrameName])) {
         [window center];
     }
-    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.contentView.bounds];
+    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.contentView.bounds
+                                                                   directory:parent ? [self activeTerminal].currentDirectory : nil];
     window.contentView = view;
     [_windows addObject:window];
     if (parent) {
@@ -194,7 +200,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     NSRect pane = current.bounds;
     if (vertical) pane.size.width = half;
     else pane.size.height = half;
-    TerminalView *next = [[TerminalView alloc] initWithFrame:pane];
+    TerminalView *next = [[TerminalView alloc] initWithFrame:pane directory:current.currentDirectory];
     next.profile = current.profile;
     [self replacePane:current with:split inWindow:window];
     current.frame = pane;

@@ -2,6 +2,7 @@
 #import "Engine.h"
 #import "ColorProfiles.h"
 #import <util.h>
+#import <libproc.h>
 #import <fcntl.h>
 #import <sys/wait.h>
 #import <sys/ioctl.h>
@@ -25,11 +26,18 @@ static const NSInteger maximumFontSize = 72;
     NSInteger _lastMouseCell;
     BOOL _localDrag;
     NSTrackingArea *_tracking;
-    NSString *_status;
+    NSString *_status, *_directory, *_shellTitle, *_query;
+    pid_t _shellPID;
+    BOOL _titleUpdatePending;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
+    return [self initWithFrame:frame directory:nil];
+}
+
+- (instancetype)initWithFrame:(NSRect)frame directory:(NSString *)directory {
     if ((self = [super initWithFrame:frame])) {
+        _directory = [directory copy] ?: NSHomeDirectory();
         _profile = MTProfiles.shared.defaultProfile;
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(profilesChanged:)
                                                    name:MTProfilesChanged object:MTProfiles.shared];
@@ -51,6 +59,7 @@ static const NSInteger maximumFontSize = 72;
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)becomeFirstResponder {
     self.needsDisplay = YES;
+    [self updateSessionTitle];
     return [super becomeFirstResponder];
 }
 - (BOOL)resignFirstResponder {
@@ -128,6 +137,41 @@ static const NSInteger maximumFontSize = 72;
     [self resizeGrid];
 }
 
+- (NSString *)currentDirectory {
+    struct proc_vnodepathinfo info;
+    if (_shellPID > 0 && proc_pidinfo(_shellPID, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info)) == sizeof(info)) {
+        const char *path = info.pvi_cdir.vip_path;
+        if (path[0] == '/') {
+            NSString *directory = [NSFileManager.defaultManager stringWithFileSystemRepresentation:path length:strlen(path)];
+            if (directory) _directory = directory;
+        }
+    }
+    return _directory;
+}
+
+- (void)updateSessionTitle {
+    NSString *title = _shellTitle.length ? _shellTitle : self.currentDirectory.stringByAbbreviatingWithTildeInPath;
+    if (![self.window.title isEqual:title]) self.window.title = title;
+}
+
+- (void)refreshTitleAfterOutput {
+    char *title = mt_take_title(_parser);
+    if (title) {
+        _shellTitle = [NSString stringWithUTF8String:title];
+        mt_string_free(title);
+        if (self.window.firstResponder == self) [self updateSessionTitle];
+    } else if (!_shellTitle.length && !_titleUpdatePending && self.window.firstResponder == self) {
+        _titleUpdatePending = YES;
+        __weak TerminalView *weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 3), dispatch_get_main_queue(), ^{
+            TerminalView *view = weakSelf;
+            if (!view) return;
+            view->_titleUpdatePending = NO;
+            if (view.window.firstResponder == view) [view updateSessionTitle];
+        });
+    }
+}
+
 - (void)startSession {
     NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
     env[@"TERM"] = @"xterm-256color";
@@ -135,27 +179,30 @@ static const NSInteger maximumFontSize = 72;
     NSString *shell = env[@"SHELL"] ?: @"/bin/zsh";
     if (![NSFileManager.defaultManager isExecutableFileAtPath:shell]) shell = @"/bin/zsh";
     env[@"SHELL"] = shell;
+    env[@"PWD"] = _directory;
     char **envp = calloc(env.count + 1, sizeof(char *));
     NSUInteger i = 0;
     for (NSString *key in env) envp[i++] = strdup([NSString stringWithFormat:@"%@=%@", key, env[key]].UTF8String);
     char *path = strdup(shell.fileSystemRepresentation);
+    char *directory = strdup(_directory.fileSystemRepresentation);
     char *home = strdup(NSHomeDirectory().fileSystemRepresentation);
     char *login = strdup([[@"-" stringByAppendingString:shell.lastPathComponent] UTF8String]);
     struct winsize size = { .ws_row = _rows, .ws_col = _cols };
     int fd;
     pid_t pid = forkpty(&fd, NULL, NULL, &size);
     if (pid == 0) {
-        chdir(home);
+        if (chdir(directory) < 0 && chdir(home) < 0) _exit(126);
         char *args[] = { login, NULL };
         execve(path, args, envp);
         _exit(127);
     }
     for (i = 0; envp[i]; i++) free(envp[i]);
-    free(envp); free(path); free(home); free(login);
+    free(envp); free(path); free(directory); free(home); free(login);
     if (pid < 0) {
         _status = @"Impossible d’ouvrir le pseudo-terminal.";
         return;
     }
+    _shellPID = pid;
     _fd = fd;
     fcntl(fd, F_SETFD, FD_CLOEXEC);
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
@@ -186,6 +233,7 @@ static const NSInteger maximumFontSize = 72;
     ssize_t count = read(_fd, bytes, sizeof(bytes));
     if (count > 0) {
         mt_feed(_parser, bytes, count);
+        [self refreshTitleAfterOutput];
         self.needsDisplay = YES;
     } else if (count == 0 || (errno != EINTR && errno != EAGAIN)) {
         [self finishSession];
@@ -207,6 +255,7 @@ static const NSInteger maximumFontSize = 72;
     _reader = _writer = nil;
     _pending = nil;
     _fd = -1;
+    _shellPID = 0;
 }
 
 - (void)dealloc {
@@ -253,20 +302,49 @@ static const NSInteger maximumFontSize = 72;
 - (void)keyDown:(NSEvent *)event {
     NSString *letters = event.charactersIgnoringModifiers;
     if (!letters.length) return;
-    NSString *suffix;
-    switch ([letters characterAtIndex:0]) {
+    unichar key = [letters characterAtIndex:0];
+    NSEventModifierFlags flags = event.modifierFlags;
+    NSInteger modifier = 1 + !!(flags & NSEventModifierFlagShift) + 2 * !!(flags & NSEventModifierFlagOption)
+                           + 4 * !!(flags & NSEventModifierFlagControl);
+    NSString *suffix = nil;
+    NSInteger number = 0;
+    BOOL application = mt_application_cursor(_parser);
+    switch (key) {
         case NSUpArrowFunctionKey: suffix = @"A"; break;
         case NSDownArrowFunctionKey: suffix = @"B"; break;
         case NSRightArrowFunctionKey: suffix = @"C"; break;
         case NSLeftArrowFunctionKey: suffix = @"D"; break;
         case NSHomeFunctionKey: suffix = @"H"; break;
         case NSEndFunctionKey: suffix = @"F"; break;
-        case NSDeleteFunctionKey: [self sendText:@"\033[3~"]; return;
-        case NSPageUpFunctionKey: [self sendText:@"\033[5~"]; return;
-        case NSPageDownFunctionKey: [self sendText:@"\033[6~"]; return;
+        case NSInsertFunctionKey: number = 2; break;
+        case NSDeleteFunctionKey: number = 3; break;
+        case NSPageUpFunctionKey: number = 5; break;
+        case NSPageDownFunctionKey: number = 6; break;
+        case NSF1FunctionKey ... NSF4FunctionKey:
+            suffix = [@"PQRS" substringWithRange:NSMakeRange(key - NSF1FunctionKey, 1)];
+            application = YES;
+            break;
+        case NSF5FunctionKey ... NSF12FunctionKey: {
+            const NSInteger codes[] = {15,17,18,19,20,21,23,24};
+            number = codes[key - NSF5FunctionKey];
+            break;
+        }
+        case NSBackTabCharacter:
+        case '\t':
+            if (flags & NSEventModifierFlagShift) { [self sendText:@"\033[Z"]; return; }
+            // Une tabulation simple est transmise telle quelle.
+            __attribute__((fallthrough));
         default: [self sendText:event.characters]; return;
     }
-    [self sendText:[(mt_application_cursor(_parser) ? @"\033O" : @"\033[") stringByAppendingString:suffix]];
+    NSString *sequence;
+    if (number) {
+        sequence = modifier == 1 ? [NSString stringWithFormat:@"\033[%ld~",(long)number]
+            : [NSString stringWithFormat:@"\033[%ld;%ld~",(long)number,(long)modifier];
+    } else {
+        sequence = modifier == 1 ? [(application ? @"\033O" : @"\033[") stringByAppendingString:suffix]
+            : [NSString stringWithFormat:@"\033[1;%ld%@",(long)modifier,suffix];
+    }
+    [self sendText:sequence];
 }
 
 - (NSInteger)cellAt:(NSEvent *)event {
@@ -393,6 +471,47 @@ static const NSInteger maximumFontSize = 72;
     if (item.action == @selector(paste:)) return _fd >= 0 &&
         [NSPasteboard.generalPasteboard availableTypeFromArray:@[NSPasteboardTypeString]] != nil;
     return YES;
+}
+
+- (BOOL)searchFor:(NSString *)query from:(int32_t)start reverse:(BOOL)reverse {
+    if (!query.length) return NO;
+    int32_t first, last;
+    if (!mt_find(_parser, query.UTF8String, start, reverse, &first, &last)) return NO;
+    _anchor = first;
+    _focus = last;
+    self.needsDisplay = YES;
+    return YES;
+}
+
+- (void)findText:(id)sender {
+    NSAlert *dialog = [NSAlert new];
+    dialog.messageText = @"Rechercher dans le terminal";
+    NSSearchField *field = [[NSSearchField alloc] initWithFrame:NSMakeRect(0,0,300,26)];
+    field.stringValue = _query ?: @"";
+    dialog.accessoryView = field;
+    [dialog addButtonWithTitle:@"Rechercher"];
+    [dialog addButtonWithTitle:@"Annuler"];
+    dialog.window.initialFirstResponder = field;
+    [dialog beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+        if (result != NSAlertFirstButtonReturn || !field.stringValue.length || !self.window) return;
+        self->_query = [field.stringValue copy];
+        if (![self searchFor:self->_query from:-1 reverse:NO]) {
+            NSAlert *empty = [NSAlert new];
+            empty.messageText = @"Aucune occurrence dans cet historique";
+            [empty beginSheetModalForWindow:self.window completionHandler:nil];
+        }
+    }];
+}
+
+- (void)findNext:(id)sender {
+    if (!_query.length) { [self findText:sender]; return; }
+    if (![self searchFor:_query from:(int32_t)MIN(_anchor,_focus) reverse:NO]) NSBeep();
+}
+
+- (void)findPrevious:(id)sender {
+    if (!_query.length) { [self findText:sender]; return; }
+    int32_t start = _anchor >= 0 ? (int32_t)MIN(_anchor,_focus) : (int32_t)_rows * _cols;
+    if (![self searchFor:_query from:start reverse:YES]) NSBeep();
 }
 
 - (void)copy:(id)sender {
