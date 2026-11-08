@@ -26,5 +26,6 @@ size_t mt_mouse_report(MTParser *, uint8_t button, bool release, bool motion,
 bool mt_cursor(MTParser *, uint16_t *row, uint16_t *col);
 // Les octets restent valides jusqu'à la prochaine mutation du parseur.
 bool mt_cell(MTParser *, uint16_t row, uint16_t col, MTPaint *);
+void mt_click_range(MTParser *, int32_t index, bool line, int32_t *first, int32_t *last);
 char *mt_selection(MTParser *, uint16_t row, uint16_t col, uint16_t endRow, uint16_t endCol);
 void mt_string_free(char *);

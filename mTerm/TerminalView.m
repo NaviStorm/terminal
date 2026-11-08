@@ -25,6 +25,8 @@ static const NSInteger maximumFontSize = 72;
     NSInteger _anchor, _focus;
     NSInteger _lastMouseCell;
     BOOL _localDrag;
+    NSInteger _clickCount;
+    int32_t _initialFirst, _initialLast;
     NSTrackingArea *_tracking;
     NSString *_status, *_directory, *_shellTitle, *_query;
     pid_t _shellPID;
@@ -49,6 +51,7 @@ static const NSInteger maximumFontSize = 72;
         [self setTerminalFontSize:size savePreference:NO];
         _parser = mt_new(1, 1);
         [self resizeGrid];
+        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
         [self startSession];
     }
     return self;
@@ -385,13 +388,29 @@ static const NSInteger maximumFontSize = 72;
     _localDrag = ![self applicationTracks:event];
     _anchor = _localDrag ? [self cellAt:event] : -1;
     _focus = -1;
-    if (!_localDrag) [self reportEvent:event button:0 release:NO motion:NO];
+    _clickCount = event.clickCount;
+    if (!_localDrag) {
+        [self reportEvent:event button:0 release:NO motion:NO];
+    } else if (_clickCount >= 2) {
+        mt_click_range(_parser, (int32_t)_anchor, _clickCount >= 3, &_initialFirst, &_initialLast);
+        _anchor = _initialFirst;
+        _focus = _initialLast;
+    }
     self.needsDisplay = YES;
+}
+
+- (void)extendSelectionTo:(NSInteger)cell {
+    if (_anchor < 0) return;
+    if (_clickCount < 2) { _focus = cell; return; }
+    int32_t first, last;
+    mt_click_range(_parser, (int32_t)cell, _clickCount >= 3, &first, &last);
+    _anchor = MIN(_initialFirst, first);
+    _focus = MAX(_initialLast, last);
 }
 
 - (void)mouseDragged:(NSEvent *)event {
     if (_localDrag) {
-        _focus = [self cellAt:event];
+        [self extendSelectionTo:[self cellAt:event]];
         self.needsDisplay = YES;
     } else {
         [self reportEvent:event button:0 release:NO motion:YES];
@@ -400,7 +419,7 @@ static const NSInteger maximumFontSize = 72;
 
 - (void)mouseUp:(NSEvent *)event {
     if (_localDrag && _focus >= 0 && _anchor >= 0) {
-        _focus = [self cellAt:event];
+        [self extendSelectionTo:[self cellAt:event]];
         [self copy:nil];
         self.needsDisplay = YES;
     } else if (!_localDrag) {
@@ -525,11 +544,53 @@ static const NSInteger maximumFontSize = 72;
     mt_string_free(text);
 }
 
-- (void)paste:(id)sender {
-    NSString *s = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
+- (void)insertPastedText:(NSString *)s {
     if (!s.length) return;
     if (mt_bracketed_paste(_parser)) s = [NSString stringWithFormat:@"\033[200~%@\033[201~",s];
     [self sendText:s];
+}
+
+- (void)paste:(id)sender {
+    [self insertPastedText:[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString]];
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    NSDictionary *options = @{NSPasteboardURLReadingFileURLsOnlyKey:@YES};
+    if (_fd < 0 || !(sender.draggingSourceOperationMask & NSDragOperationCopy)) return NSDragOperationNone;
+    return [sender.draggingPasteboard canReadObjectForClasses:@[NSURL.class] options:options]
+        ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+// Les octets de contrôle sont représentés en octal pour ne pas les envoyer au PTY.
+static void AppendShellPath(NSMutableString *text, NSString *path) {
+    [text appendString:@"'"];
+    NSUInteger start = 0;
+    for (NSUInteger i = 0; i < path.length; i++) {
+        unichar c = [path characterAtIndex:i];
+        if (c != '\'' && c >= 32 && c != 127) continue;
+        [text appendString:[path substringWithRange:NSMakeRange(start,i-start)]];
+        if (c == '\'') [text appendString:@"'\\''"];
+        else [text appendFormat:@"'$'\\%03o''", (unsigned)c];
+        start = i + 1;
+    }
+    [text appendString:[path substringFromIndex:start]];
+    [text appendString:@"'"];
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    if ([self draggingEntered:sender] == NSDragOperationNone) return NO;
+    NSArray<NSURL *> *urls = [sender.draggingPasteboard readObjectsForClasses:@[NSURL.class]
+        options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
+    NSMutableString *paths = [NSMutableString string];
+    for (NSURL *url in urls) {
+        if (!url.isFileURL || !url.path.length) continue;
+        if (paths.length) [paths appendString:@" "];
+        AppendShellPath(paths, url.path);
+    }
+    if (!paths.length) return NO;
+    [self.window makeFirstResponder:self];
+    [self insertPastedText:paths];
+    return YES;
 }
 
 - (void)profilesChanged:(NSNotification *)note {

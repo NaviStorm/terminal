@@ -186,6 +186,67 @@ extern "C" fn mt_cell(p: &Parser, row: u16, col: u16, out: &mut Paint) -> bool {
     !cell.is_wide_continuation()
 }
 
+// Bornes inclusives dans la grille visible, y compris les retours visuels.
+#[no_mangle]
+extern "C" fn mt_click_range(p: &Parser, index: i32, line: bool, first: &mut i32, last: &mut i32) {
+    let screen = p.screen();
+    let (rows, cols) = screen.size();
+    let width = i32::from(cols);
+    let row = (index / width) as u16;
+    let mut top = row;
+    let mut bottom = row;
+    while top > 0 && screen.row_wrapped(top - 1) {
+        top -= 1;
+    }
+    while bottom + 1 < rows && screen.row_wrapped(bottom) {
+        bottom += 1;
+    }
+    let left = i32::from(top) * width;
+    let right = (i32::from(bottom) + 1) * width - 1;
+    if line {
+        (*first, *last) = (left, right);
+        return;
+    }
+
+    let cell = |pos: i32| screen.cell((pos / width) as u16, (pos % width) as u16);
+    let leading = |pos| {
+        if pos > left && cell(pos).is_some_and(|c| c.is_wide_continuation()) {
+            pos - 1
+        } else {
+            pos
+        }
+    };
+    let end = |pos| pos + i32::from(cell(pos).is_some_and(|c| c.is_wide()));
+    let kind = |pos| {
+        let ch = cell(pos)
+            .and_then(|c| c.contents().chars().next())
+            .unwrap_or(' ');
+        if ch.is_whitespace() {
+            0
+        } else if ch.is_alphanumeric() || "_-./:@%+~".contains(ch) {
+            1
+        } else {
+            2
+        }
+    };
+    let mut a = leading(index);
+    let mut b = end(a);
+    let class = kind(a);
+    if class != 2 {
+        while a > left {
+            let prev = leading(a - 1);
+            if kind(prev) != class {
+                break;
+            }
+            a = prev;
+        }
+        while b < right && kind(b + 1) == class {
+            b = end(b + 1);
+        }
+    }
+    (*first, *last) = (a, b.min(right));
+}
+
 #[no_mangle]
 extern "C" fn mt_selection(p: &Parser, r: u16, c: u16, end_r: u16, end_c: u16) -> *mut c_char {
     CString::new(p.screen().contents_between(r, c, end_r, end_c))
@@ -313,6 +374,23 @@ unsafe extern "C" fn mt_find(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn click_ranges_follow_wrapping_and_wide_characters() {
+        let mut p = parser(4, 8, 1000);
+        p.process("x ré/界.log!\r\nfin".as_bytes());
+        let mut range = (0, 0);
+        for (pos, line, expected) in [
+            (6, false, (2, 10)),
+            (9, false, (2, 10)),
+            (11, false, (11, 11)),
+            (9, true, (0, 15)),
+            (16, true, (16, 23)),
+        ] {
+            mt_click_range(&p, pos, line, &mut range.0, &mut range.1);
+            assert_eq!(range, expected);
+        }
+    }
+
     #[test]
     fn search_scrollback_wrapped_unicode_and_navigation() {
         let mut p = parser(3, 8, 1000);
