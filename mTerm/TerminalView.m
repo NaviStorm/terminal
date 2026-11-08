@@ -31,6 +31,9 @@ static const NSInteger maximumFontSize = 72;
     NSString *_status, *_directory, *_shellTitle, *_query;
     pid_t _shellPID;
     BOOL _titleUpdatePending;
+    NSString *_markedText;
+    NSRange _markedSelection;
+    NSEvent *_textKeyEvent;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -51,7 +54,7 @@ static const NSInteger maximumFontSize = 72;
         [self setTerminalFontSize:size savePreference:NO];
         _parser = mt_new(1, 1);
         [self resizeGrid];
-        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeString]];
         [self startSession];
     }
     return self;
@@ -66,6 +69,10 @@ static const NSInteger maximumFontSize = 72;
     return [super becomeFirstResponder];
 }
 - (BOOL)resignFirstResponder {
+    if (self.hasMarkedText) {
+        _markedText = nil;
+        [self.inputContext discardMarkedText];
+    }
     self.needsDisplay = YES;
     return [super resignFirstResponder];
 }
@@ -236,6 +243,11 @@ static const NSInteger maximumFontSize = 72;
     ssize_t count = read(_fd, bytes, sizeof(bytes));
     if (count > 0) {
         mt_feed(_parser, bytes, count);
+        char *replies = mt_take_replies(_parser);
+        if (replies) {
+            [self enqueueInput:[NSData dataWithBytes:replies length:strlen(replies)]];
+            mt_string_free(replies);
+        }
         [self refreshTitleAfterOutput];
         self.needsDisplay = YES;
     } else if (count == 0 || (errno != EINTR && errno != EAGAIN)) {
@@ -303,6 +315,19 @@ static const NSInteger maximumFontSize = 72;
 }
 
 - (void)keyDown:(NSEvent *)event {
+    NSString *characters = event.charactersIgnoringModifiers;
+    unichar key = characters.length ? [characters characterAtIndex:0] : 0;
+    BOOL printable = !characters.length || (key >= 32 && key != 127 && !(key >= 0xf700 && key <= 0xf8ff));
+    if (self.hasMarkedText || (printable && !(event.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))) {
+        _textKeyEvent = event;
+        BOOL handled = [self.inputContext handleEvent:event];
+        _textKeyEvent = nil;
+        if (handled) return;
+    }
+    [self sendTerminalKey:event];
+}
+
+- (void)sendTerminalKey:(NSEvent *)event {
     NSString *letters = event.charactersIgnoringModifiers;
     if (!letters.length) return;
     unichar key = [letters characterAtIndex:0];
@@ -348,6 +373,94 @@ static const NSInteger maximumFontSize = 72;
             : [NSString stringWithFormat:@"\033[1;%ld%@",(long)modifier,suffix];
     }
     [self sendText:sequence];
+}
+
+// Le document de saisie est la composition en cours. Le shell possède le texte déjà validé.
+- (BOOL)hasMarkedText { return _markedText.length > 0; }
+- (NSRange)markedRange { return self.hasMarkedText ? NSMakeRange(0,_markedText.length) : NSMakeRange(NSNotFound,0); }
+- (NSRange)selectedRange { return self.hasMarkedText ? _markedSelection : NSMakeRange(0,0); }
+- (NSArray *)validAttributesForMarkedText { return @[]; }
+
+- (NSString *)compositionWithText:(id)value replacing:(NSRange)range {
+    NSString *text = [value isKindOfClass:NSAttributedString.class] ? [value string] : value;
+    if (_markedText && range.location <= _markedText.length && range.length <= _markedText.length - range.location)
+        return [_markedText stringByReplacingCharactersInRange:range withString:text];
+    return text;
+}
+
+- (void)setMarkedText:(id)value selectedRange:(NSRange)selection replacementRange:(NSRange)replacement {
+    NSUInteger start = MIN(replacement.location, _markedText.length);
+    if (replacement.location == NSNotFound) start = 0;
+    _markedText = [[self compositionWithText:value replacing:replacement] copy];
+    start = MIN(start, _markedText.length);
+    NSUInteger pos = start + MIN(selection.location, _markedText.length - start);
+    _markedSelection = NSMakeRange(pos, MIN(selection.length, _markedText.length - pos));
+    [self.inputContext invalidateCharacterCoordinates];
+    self.needsDisplay = YES;
+}
+
+- (void)insertText:(id)value replacementRange:(NSRange)replacement {
+    NSString *text = [self compositionWithText:value replacing:replacement];
+    _markedText = nil;
+    [self sendText:text];
+    self.needsDisplay = YES;
+}
+
+- (void)insertText:(id)value { [self insertText:value replacementRange:NSMakeRange(NSNotFound,0)]; }
+- (void)unmarkText {
+    if (self.hasMarkedText) [self insertText:_markedText replacementRange:NSMakeRange(NSNotFound,0)];
+}
+
+- (void)doCommandBySelector:(SEL)selector {
+    if (self.hasMarkedText && selector == @selector(cancelOperation:)) {
+        _markedText = nil;
+        self.needsDisplay = YES;
+    } else if (_textKeyEvent) {
+        [self sendTerminalKey:_textKeyEvent];
+    } else {
+        [super doCommandBySelector:selector];
+    }
+}
+
+- (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)range actualRange:(NSRangePointer)actual {
+    if (!self.hasMarkedText || range.location >= _markedText.length) {
+        if (actual) *actual = NSMakeRange(NSNotFound,0);
+        return nil;
+    }
+    range.length = MIN(range.length, _markedText.length - range.location);
+    if (actual) *actual = range;
+    return [[NSAttributedString alloc] initWithString:[_markedText substringWithRange:range]];
+}
+
+- (NSRect)compositionRect {
+    uint16_t row = 0, col = 0;
+    mt_cursor(_parser,&row,&col);
+    CGFloat width = MAX(_cw, [_markedText sizeWithAttributes:@{NSFontAttributeName:_font}].width);
+    CGFloat x = MAX(inset, MIN(inset + col*_cw, NSWidth(self.bounds) - inset - width));
+    return NSMakeRect(x, inset + row*_ch, width, _ch);
+}
+
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actual {
+    NSRect rect = [self compositionRect];
+    NSUInteger index = MIN(range.location,_markedText.length);
+    rect.origin.x += [[_markedText substringToIndex:index] sizeWithAttributes:@{NSFontAttributeName:_font}].width;
+    rect.size.width = _cw;
+    if (actual) *actual = NSMakeRange(index,0);
+    return [self.window convertRectToScreen:[self convertRect:rect toView:nil]];
+}
+
+- (NSUInteger)characterIndexForPoint:(NSPoint)point {
+    NSPoint local = [self convertPoint:[self.window convertPointFromScreen:point] fromView:nil];
+    if (!self.hasMarkedText || !NSPointInRect(local, [self compositionRect])) return NSNotFound;
+    CGFloat offset = local.x - NSMinX([self compositionRect]);
+    __block NSUInteger nearest = _markedText.length;
+    __block CGFloat x = 0;
+    [_markedText enumerateSubstringsInRange:self.markedRange options:NSStringEnumerationByComposedCharacterSequences
+        usingBlock:^(NSString *part, NSRange range, NSRange enclosing, BOOL *stop) {
+            x += [part sizeWithAttributes:@{NSFontAttributeName:self->_font}].width;
+            if (offset < x) { nearest = range.location; *stop = YES; }
+        }];
+    return nearest;
 }
 
 - (NSInteger)cellAt:(NSEvent *)event {
@@ -557,8 +670,10 @@ static const NSInteger maximumFontSize = 72;
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
     NSDictionary *options = @{NSPasteboardURLReadingFileURLsOnlyKey:@YES};
     if (_fd < 0 || !(sender.draggingSourceOperationMask & NSDragOperationCopy)) return NSDragOperationNone;
-    return [sender.draggingPasteboard canReadObjectForClasses:@[NSURL.class] options:options]
-        ? NSDragOperationCopy : NSDragOperationNone;
+    NSPasteboard *board = sender.draggingPasteboard;
+    BOOL supported = [board canReadObjectForClasses:@[NSURL.class] options:options] ||
+                     [board availableTypeFromArray:@[NSPasteboardTypeString]] != nil;
+    return supported ? NSDragOperationCopy : NSDragOperationNone;
 }
 
 // Les octets de contrôle sont représentés en octal pour ne pas les envoyer au PTY.
@@ -587,9 +702,32 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
         if (paths.length) [paths appendString:@" "];
         AppendShellPath(paths, url.path);
     }
-    if (!paths.length) return NO;
+    NSString *text = paths.length ? paths : [sender.draggingPasteboard stringForType:NSPasteboardTypeString];
+    if (!text.length) return NO;
     [self.window makeFirstResponder:self];
-    [self insertPastedText:paths];
+    if (!paths.length) {
+        // Empêcher le contenu déposé de terminer lui-même le collage encadré.
+        text = [text stringByReplacingOccurrencesOfString:@"\033" withString:@""];
+        if (!mt_bracketed_paste(_parser) && ([text rangeOfCharacterFromSet:[NSCharacterSet characterSetWithRange:NSMakeRange(0,32)]].location != NSNotFound || [text containsString:@"\177"])) {
+            NSAlert *preview = [NSAlert new];
+            preview.messageText = @"Envoyer ce texte au terminal ?";
+            preview.informativeText = @"Ce programme traite les retours à la ligne et les caractères de contrôle comme des frappes clavier.";
+            NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,400,120)];
+            scroll.hasVerticalScroller = YES;
+            NSTextView *editor = [[NSTextView alloc] initWithFrame:scroll.bounds];
+            editor.richText = NO;
+            editor.string = text;
+            scroll.documentView = editor;
+            preview.accessoryView = scroll;
+            [preview addButtonWithTitle:@"Envoyer"];
+            [preview addButtonWithTitle:@"Annuler"];
+            [preview beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+                if (result == NSAlertFirstButtonReturn) [self insertPastedText:editor.string];
+            }];
+            return YES;
+        }
+    }
+    [self insertPastedText:text];
     return YES;
 }
 
@@ -649,10 +787,20 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
             }
         }
     }
-    uint16_t row, col;
+    uint16_t row = 0, col = 0;
     if (!_status && self.window.firstResponder == self && mt_cursor(_parser,&row,&col)) {
         [[palette color:MTCursor] setFill];
         NSRectFill(NSMakeRect(inset+col*_cw,inset+(1+row)*_ch-2,_cw,2));
+    }
+    if (self.hasMarkedText && self.window.firstResponder == self) {
+        NSRect rect = [self compositionRect];
+        [[palette color:MTBackground] setFill];
+        NSRectFill(rect);
+        NSMutableAttributedString *marked = [[NSMutableAttributedString alloc] initWithString:_markedText attributes:@{
+            NSFontAttributeName:_font, NSForegroundColorAttributeName:[palette color:MTForeground],
+            NSUnderlineStyleAttributeName:@(NSUnderlineStyleSingle)}];
+        [marked addAttribute:NSBackgroundColorAttributeName value:[palette color:MTSelection] range:_markedSelection];
+        [marked drawAtPoint:rect.origin];
     }
     if (_status) [_status drawAtPoint:NSMakePoint(inset,NSMaxY(self.bounds)-_ch)
                        withAttributes:@{NSForegroundColorAttributeName:[palette color:MTForeground],

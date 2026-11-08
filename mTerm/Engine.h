@@ -14,6 +14,7 @@ typedef struct {
 MTParser *mt_new(uint16_t rows, uint16_t cols);
 void mt_free(MTParser *);
 void mt_feed(MTParser *, const uint8_t *, size_t);
+char *mt_take_replies(MTParser *);
 char *mt_take_title(MTParser *);
 bool mt_find(MTParser *, const char *query, int32_t start, bool reverse, int32_t *first, int32_t *last);
 void mt_resize(MTParser *, uint16_t rows, uint16_t cols);

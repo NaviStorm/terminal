@@ -2,7 +2,7 @@
 
 @class MTProfile;
 
-@interface TerminalView : NSView <NSMenuItemValidation>
+@interface TerminalView : NSView <NSMenuItemValidation, NSTextInputClient>
 @property(nonatomic, strong) MTProfile *profile;
 - (instancetype)initWithFrame:(NSRect)frame directory:(NSString *)directory;
 - (NSString *)currentDirectory;

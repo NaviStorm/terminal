@@ -5,8 +5,61 @@ use vt100::Color;
 #[derive(Default)]
 struct SessionInfo {
     title: Option<CString>,
+    replies: String,
 }
 impl vt100::Callbacks for SessionInfo {
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        prefix: Option<u8>,
+        second: Option<u8>,
+        params: &[&[u16]],
+        command: char,
+    ) {
+        use std::fmt::Write;
+        if second.is_some() {
+            return;
+        }
+        let value = match params {
+            [] => 0,
+            [p] if p.len() == 1 => p[0],
+            _ => return,
+        };
+        match (prefix, value, command) {
+            (None, 0, 'c') => self.replies.push_str("\x1b[?1;2c"),
+            (Some(b'>'), 0, 'c') => self.replies.push_str("\x1b[>0;1;0c"),
+            (None, 5, 'n') => self.replies.push_str("\x1b[0n"),
+            (None | Some(b'?'), 6, 'n') => {
+                let (row, col) = screen.cursor_position();
+                let (rows, cols) = screen.size();
+                let marker = if prefix.is_some() { "?" } else { "" };
+                let _ = write!(
+                    self.replies,
+                    "\x1b[{marker}{};{}R",
+                    row.saturating_add(1).min(rows),
+                    col.saturating_add(1).min(cols)
+                );
+            }
+            (None, 18, 't') => {
+                let (rows, cols) = screen.size();
+                let _ = write!(self.replies, "\x1b[8;{rows};{cols}t");
+            }
+            _ => {}
+        }
+    }
+
+    fn unhandled_escape(
+        &mut self,
+        _: &mut vt100::Screen,
+        first: Option<u8>,
+        second: Option<u8>,
+        byte: u8,
+    ) {
+        if (first, second, byte) == (None, None, b'Z') {
+            self.replies.push_str("\x1b[?1;2c");
+        }
+    }
+
     fn set_window_title(&mut self, _: &mut vt100::Screen, bytes: &[u8]) {
         let text: String = String::from_utf8_lossy(bytes)
             .chars()
@@ -19,6 +72,17 @@ impl vt100::Callbacks for SessionInfo {
 type Parser = vt100::Parser<SessionInfo>;
 fn parser(rows: u16, cols: u16, history: usize) -> Parser {
     Parser::new_with_callbacks(rows, cols, history, SessionInfo::default())
+}
+
+#[no_mangle]
+extern "C" fn mt_take_replies(p: &mut Parser) -> *mut c_char {
+    let replies = &mut p.callbacks_mut().replies;
+    if replies.is_empty() {
+        return std::ptr::null_mut();
+    }
+    CString::new(std::mem::take(replies))
+        .expect("réponses ASCII")
+        .into_raw()
 }
 
 #[no_mangle]
@@ -374,6 +438,20 @@ unsafe extern "C" fn mt_find(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reports_are_ordered_and_use_the_cursor_at_request_time() {
+        let mut p = parser(4, 10, 0);
+        p.process(b"\x1b[3;4H\x1b[6");
+        assert!(mt_take_replies(&mut p).is_null());
+        p.process(b"nA\x1b[?6n\x1b[5n\x1b[c\x1b[>0c\x1b[18t\x1bZ\x1b[?1;2c\x1b[0n");
+        let replies = unsafe { CString::from_raw(mt_take_replies(&mut p)) };
+        assert_eq!(
+            replies.as_bytes(),
+            b"\x1b[3;4R\x1b[?3;5R\x1b[0n\x1b[?1;2c\x1b[>0;1;0c\x1b[8;4;10t\x1b[?1;2c"
+        );
+        assert!(mt_take_replies(&mut p).is_null());
+    }
+
     #[test]
     fn click_ranges_follow_wrapping_and_wide_characters() {
         let mut p = parser(4, 8, 1000);
