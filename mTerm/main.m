@@ -1,11 +1,14 @@
 #import <AppKit/AppKit.h>
 #import "TerminalView.h"
 
+static NSString *const terminalFrameName = @"TerminalWindow";
+
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @end
 
 @implementation AppDelegate {
     NSMutableSet<NSWindow *> *_windows;
+    NSHashTable<NSWindow *> *_fullScreenTransitions;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
@@ -28,6 +31,7 @@
     [view addItemWithTitle:@"Réduire la police" action:@selector(decreaseFont:) keyEquivalent:@"-"];
     NSApp.mainMenu = bar;
     _windows = [NSMutableSet set];
+    _fullScreenTransitions = [NSHashTable weakObjectsHashTable];
     [self newWindow:nil];
     [NSApp activateIgnoringOtherApps:YES];
 }
@@ -43,14 +47,15 @@
     window.contentMinSize = NSMakeSize(240,120);
     window.tabbingIdentifier = @"mTerm";
     window.tabbingMode = NSWindowTabbingModeDisallowed;
+    if (!parent && (_windows.count || ![window setFrameUsingName:terminalFrameName])) {
+        [window center];
+    }
     TerminalView *view = [[TerminalView alloc] initWithFrame:window.contentView.bounds];
     window.contentView = view;
     [_windows addObject:window];
     if (parent) {
         window.tabbingMode = NSWindowTabbingModeAutomatic;
         [parent addTabbedWindow:window ordered:NSWindowAbove];
-    } else {
-        [window center];
     }
     [window makeFirstResponder:view];
     [window makeKeyAndOrderFront:nil];
@@ -61,8 +66,45 @@
 - (void)newTab:(id)sender { [self openAlongside:NSApp.keyWindow]; }
 - (void)newWindowForTab:(id)sender { [self newTab:sender]; }
 
+- (void)saveNormalFrame:(NSWindow *)window {
+    if (![_windows containsObject:window] || window.miniaturized ||
+        (window.styleMask & NSWindowStyleMaskFullScreen) ||
+        [_fullScreenTransitions containsObject:window]) return;
+    [window saveFrameUsingName:terminalFrameName];
+}
+
+- (void)windowDidBecomeKey:(NSNotification *)note { [self saveNormalFrame:note.object]; }
+
+- (void)windowGeometryChanged:(NSNotification *)note {
+    NSWindow *window = note.object;
+    if (window.keyWindow) [self saveNormalFrame:window];
+}
+
+- (void)windowDidMove:(NSNotification *)note { [self windowGeometryChanged:note]; }
+- (void)windowDidResize:(NSNotification *)note { [self windowGeometryChanged:note]; }
+
+- (void)windowWillEnterFullScreen:(NSNotification *)note {
+    [self saveNormalFrame:note.object];
+    [_fullScreenTransitions addObject:note.object];
+}
+
+- (void)windowDidExitFullScreen:(NSNotification *)note {
+    [_fullScreenTransitions removeObject:note.object];
+    [self windowGeometryChanged:note];
+}
+
+- (void)windowDidFailToEnterFullScreen:(NSWindow *)window {
+    [_fullScreenTransitions removeObject:window];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)note {
+    NSWindow *window = NSApp.keyWindow ?: NSApp.mainWindow;
+    if (window) [self saveNormalFrame:window];
+}
+
 - (void)windowWillClose:(NSNotification *)note {
     NSWindow *window = note.object;
+    if (_windows.count == 1) [self saveNormalFrame:window];
     [(TerminalView *)window.contentView stopSession];
     [_windows removeObject:window];
 }
