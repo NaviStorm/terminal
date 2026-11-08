@@ -223,7 +223,7 @@ extern "C" fn mt_click_range(p: &Parser, index: i32, line: bool, first: &mut i32
             .unwrap_or(' ');
         if ch.is_whitespace() {
             0
-        } else if ch.is_alphanumeric() || "_-./:%+~".contains(ch) {
+        } else if ch.is_alphanumeric() || "_-./%+~".contains(ch) {
             1
         } else {
             2
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn click_ranges_follow_wrapping_and_wide_characters() {
         let mut p = parser(4, 8, 1000);
-        p.process("x ré/界.log!\r\nu@host".as_bytes());
+        p.process("x ré/界.log!\r\nu@host:9".as_bytes());
         let mut range = (0, 0);
         for (pos, line, expected) in [
             (6, false, (2, 10)),
@@ -388,6 +388,8 @@ mod tests {
             (16, false, (16, 16)),
             (17, false, (17, 17)),
             (18, false, (18, 21)),
+            (22, false, (22, 22)),
+            (23, false, (23, 23)),
         ] {
             mt_click_range(&p, pos, line, &mut range.0, &mut range.1);
             assert_eq!(range, expected);
