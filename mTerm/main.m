@@ -27,6 +27,16 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     NSMenuItem *horizontal = [session addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
     horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     horizontal.target = self;
+    NSMenu *navigation = [[NSMenu alloc] initWithTitle:@"Activer un volet"];
+    [session addItemWithTitle:navigation.title action:nil keyEquivalent:@""].submenu = navigation;
+    NSArray *directions = @[@"À gauche", @"À droite", @"Au-dessus", @"En dessous"];
+    const unichar arrows[] = {NSLeftArrowFunctionKey, NSRightArrowFunctionKey, NSUpArrowFunctionKey, NSDownArrowFunctionKey};
+    for (NSUInteger i = 0; i < directions.count; i++) {
+        NSString *key = [NSString stringWithCharacters:&arrows[i] length:1];
+        NSMenuItem *item = [navigation addItemWithTitle:directions[i] action:@selector(focusNeighbor:) keyEquivalent:key];
+        item.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+        item.target = self;
+    }
     [session addItemWithTitle:@"Fermer" action:@selector(closeSession:) keyEquivalent:@"w"].target = self;
     NSMenu *edit = [[NSMenu alloc] initWithTitle:@"Édition"];
     [bar addItemWithTitle:@"Édition" action:nil keyEquivalent:@""].submenu = edit;
@@ -118,10 +128,49 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(splitVertically:) || item.action == @selector(splitHorizontally:) ||
-        item.action == @selector(selectProfile:)) return [self activeTerminal] != nil;
+        item.action == @selector(selectProfile:) || item.action == @selector(focusNeighbor:)) return [self activeTerminal] != nil;
     if (item.action == @selector(detachPane:)) return [[self activeTerminal].superview isKindOfClass:NSSplitView.class];
     if (item.action == @selector(closeSession:)) return NSApp.keyWindow != nil;
     return YES;
+}
+
+- (void)focusNeighbor:(NSMenuItem *)sender {
+    TerminalView *current = [self activeTerminal];
+    if (!current) return;
+    unichar arrow = [sender.keyEquivalent characterAtIndex:0];
+    BOOL horizontal = arrow == NSLeftArrowFunctionKey || arrow == NSRightArrowFunctionKey;
+    BOOL forward = arrow == NSRightArrowFunctionKey || arrow == NSUpArrowFunctionKey;
+    // Les coordonnées de fenêtre ont leur origine en bas à gauche, même pour les vues inversées.
+    NSRect source = [current convertRect:current.bounds toView:nil];
+    CGFloat low = horizontal ? NSMinY(source) : NSMinX(source);
+    CGFloat high = horizontal ? NSMaxY(source) : NSMaxX(source);
+    CGFloat bestGap = CGFLOAT_MAX, bestOverlap = 0;
+    TerminalView *best = nil;
+    NSMutableArray<NSView *> *pending = [NSMutableArray arrayWithObject:current.window.contentView];
+    while (pending.count) {
+        NSView *view = pending.lastObject;
+        [pending removeLastObject];
+        if ([view isKindOfClass:NSSplitView.class]) {
+            [pending addObjectsFromArray:view.subviews];
+            continue;
+        }
+        if (view == current || ![view isKindOfClass:TerminalView.class] || NSIsEmptyRect(view.visibleRect)) continue;
+        NSRect rect = [view convertRect:view.bounds toView:nil];
+        CGFloat gap, overlap;
+        if (horizontal) {
+            gap = forward ? NSMinX(rect) - NSMaxX(source) : NSMinX(source) - NSMaxX(rect);
+            overlap = MIN(high, NSMaxY(rect)) - MAX(low, NSMinY(rect));
+        } else {
+            gap = forward ? NSMinY(rect) - NSMaxY(source) : NSMinY(source) - NSMaxY(rect);
+            overlap = MIN(high, NSMaxX(rect)) - MAX(low, NSMinX(rect));
+        }
+        if (gap >= 0 && overlap > 0 && (gap < bestGap || (gap == bestGap && overlap > bestOverlap))) {
+            best = (TerminalView *)view;
+            bestGap = gap;
+            bestOverlap = overlap;
+        }
+    }
+    if (best) [current.window makeFirstResponder:best];
 }
 
 - (void)replacePane:(NSView *)old with:(NSView *)replacement inWindow:(NSWindow *)window {
