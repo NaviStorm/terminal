@@ -49,6 +49,14 @@ static const NSInteger maximumFontSize = 72;
 - (BOOL)isFlipped { return YES; }
 - (BOOL)isOpaque { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)becomeFirstResponder {
+    self.needsDisplay = YES;
+    return [super becomeFirstResponder];
+}
+- (BOOL)resignFirstResponder {
+    self.needsDisplay = YES;
+    return [super resignFirstResponder];
+}
 
 - (void)setTerminalFontSize:(CGFloat)size savePreference:(BOOL)savePreference {
     if (_font.pointSize == size) return;
@@ -57,7 +65,7 @@ static const NSInteger maximumFontSize = 72;
     CGFloat cellHeight = ceil(font.ascender - font.descender + font.leading);
     NSWindow *window = self.window;
     NSRect frame = window.frame;
-    BOOL resizeWindow = window && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
+    BOOL resizeWindow = window.contentView == self && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
     if (resizeWindow) {
         CGFloat width = MAX(window.contentMinSize.width, ceil(2 * inset + _cols * cellWidth));
         CGFloat height = MAX(window.contentMinSize.height, ceil(2 * inset + _rows * cellHeight));
@@ -432,7 +440,7 @@ static const NSInteger maximumFontSize = 72;
         }
     }
     uint16_t row, col;
-    if (!_status && mt_cursor(_parser,&row,&col)) {
+    if (!_status && self.window.firstResponder == self && mt_cursor(_parser,&row,&col)) {
         [[palette color:MTCursor] setFill];
         NSRectFill(NSMakeRect(inset+col*_cw,inset+(1+row)*_ch-2,_cw,2));
     }

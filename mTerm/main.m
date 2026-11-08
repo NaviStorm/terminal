@@ -4,7 +4,7 @@
 
 static NSString *const terminalFrameName = @"TerminalWindow";
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSSplitViewDelegate, NSMenuItemValidation>
 @end
 
 @implementation AppDelegate {
@@ -23,7 +23,11 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [bar addItemWithTitle:@"Session" action:nil keyEquivalent:@""].submenu = session;
     [session addItemWithTitle:@"Nouvelle fenêtre" action:@selector(newWindow:) keyEquivalent:@"n"].target = self;
     [session addItemWithTitle:@"Nouvel onglet" action:@selector(newTab:) keyEquivalent:@"t"].target = self;
-    [session addItemWithTitle:@"Fermer" action:@selector(performClose:) keyEquivalent:@"w"];
+    [session addItemWithTitle:@"Scinder verticalement" action:@selector(splitVertically:) keyEquivalent:@"d"].target = self;
+    NSMenuItem *horizontal = [session addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
+    horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    horizontal.target = self;
+    [session addItemWithTitle:@"Fermer" action:@selector(closeSession:) keyEquivalent:@"w"].target = self;
     NSMenu *edit = [[NSMenu alloc] initWithTitle:@"Édition"];
     [bar addItemWithTitle:@"Édition" action:nil keyEquivalent:@""].submenu = edit;
     [edit addItemWithTitle:@"Copier" action:@selector(copy:) keyEquivalent:@"c"];
@@ -72,7 +76,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
-    TerminalView *terminal = [NSApp.keyWindow.contentView isKindOfClass:TerminalView.class] ? (id)NSApp.keyWindow.contentView : nil;
+    TerminalView *terminal = [self activeTerminal];
     for (MTProfile *profile in MTProfiles.shared.profiles) {
         NSMenuItem *item = [menu addItemWithTitle:profile.name action:@selector(selectProfile:) keyEquivalent:@""];
         item.representedObject = profile;
@@ -82,8 +86,83 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 }
 
 - (void)selectProfile:(NSMenuItem *)sender {
-    if ([NSApp.keyWindow.contentView isKindOfClass:TerminalView.class])
-        ((TerminalView *)NSApp.keyWindow.contentView).profile = sender.representedObject;
+    [self activeTerminal].profile = sender.representedObject;
+}
+
+- (TerminalView *)activeTerminal {
+    NSResponder *responder = NSApp.keyWindow.firstResponder;
+    return [responder isKindOfClass:TerminalView.class] ? (TerminalView *)responder : nil;
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(splitVertically:) || item.action == @selector(splitHorizontally:) ||
+        item.action == @selector(selectProfile:)) return [self activeTerminal] != nil;
+    if (item.action == @selector(closeSession:)) return NSApp.keyWindow != nil;
+    return YES;
+}
+
+- (void)replacePane:(NSView *)old with:(NSView *)replacement inWindow:(NSWindow *)window {
+    replacement.frame = old.frame;
+    replacement.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    if (old == window.contentView) window.contentView = replacement;
+    else [old.superview replaceSubview:old with:replacement];
+}
+
+- (void)splitActivePaneVertically:(BOOL)vertical {
+    TerminalView *current = [self activeTerminal];
+    if (!current) return;
+    NSWindow *window = current.window;
+    NSSplitView *split = [[NSSplitView alloc] initWithFrame:current.frame];
+    split.vertical = vertical;
+    split.dividerStyle = NSSplitViewDividerStyleThin;
+    CGFloat length = vertical ? NSWidth(current.bounds) : NSHeight(current.bounds);
+    CGFloat half = floor((length - split.dividerThickness) / 2);
+    if (half < (vertical ? 80 : 48)) { NSBeep(); return; }
+
+    NSRect pane = current.bounds;
+    if (vertical) pane.size.width = half;
+    else pane.size.height = half;
+    TerminalView *next = [[TerminalView alloc] initWithFrame:pane];
+    next.profile = current.profile;
+    [self replacePane:current with:split inWindow:window];
+    current.frame = pane;
+    [split addSubview:current];
+    [split addSubview:next];
+    split.delegate = self;
+    [split adjustSubviews];
+    [split setPosition:half ofDividerAtIndex:0];
+    [window makeFirstResponder:next];
+}
+
+- (void)splitVertically:(id)sender { [self splitActivePaneVertically:YES]; }
+- (void)splitHorizontally:(id)sender { [self splitActivePaneVertically:NO]; }
+
+- (CGFloat)splitView:(NSSplitView *)split constrainSplitPosition:(CGFloat)position ofSubviewAt:(NSInteger)divider {
+    CGFloat length = (split.vertical ? NSWidth(split.bounds) : NSHeight(split.bounds)) - split.dividerThickness;
+    CGFloat minimum = MIN(split.vertical ? 80 : 48, length / 2);
+    return MAX(minimum, MIN(length - minimum, position));
+}
+
+- (void)closeSession:(id)sender {
+    TerminalView *current = [self activeTerminal];
+    NSWindow *window = NSApp.keyWindow;
+    NSSplitView *split = (NSSplitView *)current.superview;
+    if (![split isKindOfClass:NSSplitView.class]) {
+        [window performClose:sender];
+        return;
+    }
+    NSView *remaining = split.subviews.firstObject == current ? split.subviews.lastObject : split.subviews.firstObject;
+    [current stopSession];
+    [remaining removeFromSuperview];
+    [self replacePane:split with:remaining inWindow:window];
+    NSView *focus = remaining;
+    while ([focus isKindOfClass:NSSplitView.class]) focus = focus.subviews.firstObject;
+    [window makeFirstResponder:focus];
+}
+
+- (void)stopSessionsInView:(NSView *)view {
+    if ([view isKindOfClass:TerminalView.class]) [(TerminalView *)view stopSession];
+    else for (NSView *child in view.subviews) [self stopSessionsInView:child];
 }
 
 - (void)newWindow:(id)sender { [self openAlongside:nil]; }
@@ -129,7 +208,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 - (void)windowWillClose:(NSNotification *)note {
     NSWindow *window = note.object;
     if (_windows.count == 1) [self saveNormalFrame:window];
-    [(TerminalView *)window.contentView stopSession];
+    [self stopSessionsInView:window.contentView];
     [_windows removeObject:window];
 }
 
