@@ -47,10 +47,36 @@ static NSColor *Color(uint32_t rgb) {
 - (BOOL)acceptsFirstResponder { return YES; }
 
 - (void)setTerminalFontSize:(CGFloat)size {
-    _font = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightRegular];
+    if (_font.pointSize == size) return;
+    NSFont *font = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightRegular];
+    CGFloat cellWidth = [@"M" sizeWithAttributes:@{NSFontAttributeName:font}].width;
+    CGFloat cellHeight = ceil(font.ascender - font.descender + font.leading);
+    NSWindow *window = self.window;
+    NSRect frame = window.frame;
+    if (window && _parser) {
+        CGFloat width = MAX(window.contentMinSize.width, ceil(2 * inset + _cols * cellWidth));
+        CGFloat height = MAX(window.contentMinSize.height, ceil(2 * inset + _rows * cellHeight));
+        // La différence inclut la barre de titre et, le cas échéant, les onglets.
+        NSSize decoration = NSMakeSize(NSWidth(frame) - NSWidth(self.bounds),
+                                       NSHeight(frame) - NSHeight(self.bounds));
+        NSRect visible = (window.screen ?: NSScreen.mainScreen).visibleFrame;
+        if ((window.styleMask & NSWindowStyleMaskFullScreen) ||
+            width + decoration.width > NSWidth(visible) ||
+            floor((width - 2 * inset) / cellWidth) != _cols) {
+            NSBeep();
+            return;
+        }
+        CGFloat top = MIN(NSMaxY(frame), NSMaxY(visible));
+        frame.size.width = width + decoration.width;
+        frame.size.height = MIN(height + decoration.height, NSHeight(visible));
+        frame.origin.x = MAX(NSMinX(visible), MIN(NSMinX(frame), NSMaxX(visible) - NSWidth(frame)));
+        frame.origin.y = MAX(NSMinY(visible), top - NSHeight(frame));
+    }
+    _font = font;
     _bold = [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightBold];
-    _cw = [@"M" sizeWithAttributes:@{NSFontAttributeName:_font}].width;
-    _ch = ceil(_font.ascender - _font.descender + _font.leading);
+    _cw = cellWidth;
+    _ch = cellHeight;
+    if (window && _parser) [window setFrame:frame display:YES];
     [self resizeGrid];
     self.needsDisplay = YES;
 }
