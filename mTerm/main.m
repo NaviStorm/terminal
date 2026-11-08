@@ -1,9 +1,10 @@
 #import <AppKit/AppKit.h>
 #import "TerminalView.h"
+#import "ColorProfiles.h"
 
 static NSString *const terminalFrameName = @"TerminalWindow";
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate>
 @end
 
 @implementation AppDelegate {
@@ -15,6 +16,8 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     NSMenu *bar = [NSMenu new];
     NSMenu *app = [NSMenu new];
     [bar addItemWithTitle:@"mTerm" action:nil keyEquivalent:@""].submenu = app;
+    [app addItemWithTitle:@"Réglages…" action:@selector(showSettings:) keyEquivalent:@","].target = self;
+    [app addItem:NSMenuItem.separatorItem];
     [app addItemWithTitle:@"Quitter mTerm" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenu *session = [[NSMenu alloc] initWithTitle:@"Session"];
     [bar addItemWithTitle:@"Session" action:nil keyEquivalent:@""].submenu = session;
@@ -29,6 +32,9 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [bar addItemWithTitle:@"Présentation" action:nil keyEquivalent:@""].submenu = view;
     [view addItemWithTitle:@"Agrandir la police" action:@selector(increaseFont:) keyEquivalent:@"+"];
     [view addItemWithTitle:@"Réduire la police" action:@selector(decreaseFont:) keyEquivalent:@"-"];
+    NSMenu *profiles = [[NSMenu alloc] initWithTitle:@"Profil de couleurs"];
+    profiles.delegate = self;
+    [view addItemWithTitle:profiles.title action:nil keyEquivalent:@""].submenu = profiles;
     NSApp.mainMenu = bar;
     _windows = [NSMutableSet set];
     _fullScreenTransitions = [NSHashTable weakObjectsHashTable];
@@ -62,8 +68,26 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     window.tabbingMode = NSWindowTabbingModeAutomatic;
 }
 
+- (void)showSettings:(id)sender { MTShowColorSettings(); }
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    TerminalView *terminal = [NSApp.keyWindow.contentView isKindOfClass:TerminalView.class] ? (id)NSApp.keyWindow.contentView : nil;
+    for (MTProfile *profile in MTProfiles.shared.profiles) {
+        NSMenuItem *item = [menu addItemWithTitle:profile.name action:@selector(selectProfile:) keyEquivalent:@""];
+        item.representedObject = profile;
+        item.target = terminal ? self : nil;
+        item.state = terminal.profile == profile ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+}
+
+- (void)selectProfile:(NSMenuItem *)sender {
+    if ([NSApp.keyWindow.contentView isKindOfClass:TerminalView.class])
+        ((TerminalView *)NSApp.keyWindow.contentView).profile = sender.representedObject;
+}
+
 - (void)newWindow:(id)sender { [self openAlongside:nil]; }
-- (void)newTab:(id)sender { [self openAlongside:NSApp.keyWindow]; }
+- (void)newTab:(id)sender { [self openAlongside:[_windows containsObject:NSApp.keyWindow] ? NSApp.keyWindow : nil]; }
 - (void)newWindowForTab:(id)sender { [self newTab:sender]; }
 
 - (void)saveNormalFrame:(NSWindow *)window {

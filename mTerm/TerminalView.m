@@ -1,5 +1,6 @@
 #import "TerminalView.h"
 #import "Engine.h"
+#import "ColorProfiles.h"
 #import <util.h>
 #import <fcntl.h>
 #import <sys/wait.h>
@@ -9,12 +10,6 @@ static const CGFloat inset = 8;
 static NSString *const fontSizeKey = @"TerminalFontSize";
 static const NSInteger minimumFontSize = 6;
 static const NSInteger maximumFontSize = 72;
-
-static NSColor *Color(uint32_t rgb) {
-    return [NSColor colorWithSRGBRed:((rgb >> 16) & 255) / 255.0
-                               green:((rgb >> 8) & 255) / 255.0
-                                blue:(rgb & 255) / 255.0 alpha:1];
-}
 
 @implementation TerminalView {
     MTParser *_parser;
@@ -35,6 +30,9 @@ static NSColor *Color(uint32_t rgb) {
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
+        _profile = MTProfiles.shared.defaultProfile;
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(profilesChanged:)
+                                                   name:MTProfilesChanged object:MTProfiles.shared];
         _fd = -1;
         _lastMouseCell = -1;
         _anchor = _focus = -1;
@@ -377,8 +375,24 @@ static NSColor *Color(uint32_t rgb) {
     [self sendText:s];
 }
 
+- (void)profilesChanged:(NSNotification *)note {
+    if (![MTProfiles.shared.profiles containsObject:_profile]) _profile = MTProfiles.shared.defaultProfile;
+    self.needsDisplay = YES;
+}
+
+- (void)setProfile:(MTProfile *)profile {
+    _profile = profile;
+    self.needsDisplay = YES;
+}
+
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    self.needsDisplay = YES;
+}
+
 - (void)drawRect:(NSRect)dirty {
-    [Color(0x161616) setFill];
+    MTPalette *palette = [_profile paletteForAppearance:self.effectiveAppearance];
+    [[palette color:MTBackground] setFill];
     NSRectFill(dirty);
     NSRange selection = NSMakeRange(0, 0);
     if (_anchor >= 0 && _focus >= 0) {
@@ -393,7 +407,7 @@ static NSColor *Color(uint32_t rgb) {
             NSUInteger rowStart = row * _cols;
             NSRange highlight = NSIntersectionRange(selection, NSMakeRange(rowStart, _cols));
             if (highlight.length) {
-                [NSColor.selectedTextBackgroundColor setFill];
+                [[palette color:MTSelection] setFill];
                 NSRectFill(NSMakeRect(inset + (highlight.location - rowStart) * _cw,
                                       inset + row * _ch, highlight.length * _cw, _ch));
             }
@@ -403,15 +417,15 @@ static NSColor *Color(uint32_t rgb) {
                 CGRect rect = CGRectMake(inset+col*_cw,inset+row*_ch,_cw*(cell.wide ? 2 : 1),_ch);
                 if (!CGRectIntersectsRect(rect,dirty)) continue;
                 BOOL selected = NSLocationInRange(rowStart + col, highlight);
-                if (!selected && cell.bg != 0x161616) {
-                    [Color(cell.bg) setFill];
+                if (!selected && cell.bg != MTPaletteReference + MTBackground) {
+                    [[palette resolve:cell.bg] setFill];
                     NSRectFill(rect);
                 }
                 if (!cell.len) continue;
                 NSString *s = [[NSString alloc] initWithBytes:cell.bytes length:cell.len encoding:NSUTF8StringEncoding];
                 [s drawAtPoint:rect.origin withAttributes:@{
                     NSFontAttributeName:cell.bold ? _bold : _font,
-                    NSForegroundColorAttributeName:selected ? NSColor.selectedTextColor : Color(cell.fg),
+                    NSForegroundColorAttributeName:selected ? [palette color:MTSelectedText] : [palette resolve:cell.fg],
                     NSUnderlineStyleAttributeName:@(cell.underline)
                 }];
             }
@@ -419,11 +433,11 @@ static NSColor *Color(uint32_t rgb) {
     }
     uint16_t row, col;
     if (!_status && mt_cursor(_parser,&row,&col)) {
-        [NSColor.whiteColor setFill];
+        [[palette color:MTCursor] setFill];
         NSRectFill(NSMakeRect(inset+col*_cw,inset+(1+row)*_ch-2,_cw,2));
     }
     if (_status) [_status drawAtPoint:NSMakePoint(inset,NSMaxY(self.bounds)-_ch)
-                       withAttributes:@{NSForegroundColorAttributeName:NSColor.whiteColor,
-                                        NSBackgroundColorAttributeName:Color(0x161616)}];
+                       withAttributes:@{NSForegroundColorAttributeName:[palette color:MTForeground],
+                                        NSBackgroundColorAttributeName:[palette color:MTBackground]}];
 }
 @end

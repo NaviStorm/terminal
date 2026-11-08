@@ -110,15 +110,13 @@ extern "C" fn mt_mouse_report(
     len
 }
 
-fn rgb(color: Color, default: u32) -> u32 {
-    const PALETTE: [u32; 16] = [
-        0x161616, 0xb64040, 0x419849, 0xc09835, 0x527dcc, 0xa458ac, 0x389696, 0xc8c8c8, 0x747474,
-        0xff7676, 0x75d581, 0xedd274, 0x88abff, 0xd68cdc, 0x78dddd, 0xffffff,
-    ];
+const PALETTE_REFERENCE: u32 = 1 << 24;
+
+fn paint_color(color: Color, default: u32) -> u32 {
     match color {
         Color::Default => default,
         Color::Rgb(r, g, b) => u32::from_be_bytes([0, r, g, b]),
-        Color::Idx(i @ 0..=15) => PALETTE[i as usize],
+        Color::Idx(i @ 0..=15) => PALETTE_REFERENCE + u32::from(i),
         Color::Idx(i @ 16..=231) => {
             let n = i - 16;
             let level = |v| if v == 0 { 0 } else { 55 + 40 * v };
@@ -144,8 +142,8 @@ extern "C" fn mt_cell(p: &Parser, row: u16, col: u16, out: &mut Paint) -> bool {
     let Some(cell) = p.screen().cell(row, col) else {
         return false;
     };
-    let mut fg = rgb(cell.fgcolor(), 0xeeeeee);
-    let mut bg = rgb(cell.bgcolor(), 0x161616);
+    let mut fg = paint_color(cell.fgcolor(), PALETTE_REFERENCE + 16);
+    let mut bg = paint_color(cell.bgcolor(), PALETTE_REFERENCE + 17);
     if cell.inverse() {
         std::mem::swap(&mut fg, &mut bg);
     }
@@ -175,6 +173,33 @@ unsafe extern "C" fn mt_string_free(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn indexed_palette_rgb_and_reverse_video() {
+        let mut p = Parser::new(2, 8, 0);
+        p.process(b"\x1b[31mA\x1b[7mB\x1b[0;38;2;1;2;3mC\x1b[38;5;196mD");
+        let mut paint = Paint {
+            bytes: std::ptr::null(),
+            len: 0,
+            fg: 0,
+            bg: 0,
+            bold: false,
+            underline: false,
+            wide: false,
+        };
+        for (col, (fg, bg)) in [
+            (PALETTE_REFERENCE + 1, PALETTE_REFERENCE + 17),
+            (PALETTE_REFERENCE + 17, PALETTE_REFERENCE + 1),
+            (0x010203, PALETTE_REFERENCE + 17),
+            (0xff0000, PALETTE_REFERENCE + 17),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(mt_cell(&p, 0, col as u16, &mut paint));
+            assert_eq!((paint.fg, paint.bg), (fg, bg));
+        }
+    }
+
     #[test]
     fn mouse_modes_and_wire_encodings() {
         let mut p = Parser::new(24, 240, 0);

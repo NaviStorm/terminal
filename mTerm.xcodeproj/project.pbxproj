@@ -10,6 +10,8 @@
 		BADE999F7747271380612EB1 /* TerminalView.m in Sources */ = {isa = PBXBuildFile; fileRef = E831B1AC36E0FA47B8C4F8DA /* TerminalView.m */; };
 		C70281AEE614FA5EF4EDAE6D /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = AE8A1ED2C9264C85B1B19543 /* main.m */; };
 		D403C4387C927FA8ABE14D39 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC449E4A03BC8DA72F19FC04 /* Cocoa.framework */; };
+		BD0000000000000000000001 /* ColorProfiles.m in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000001 /* ColorProfiles.m */; };
+		BD0000000000000000000002 /* ColorSettings.m in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000002 /* ColorSettings.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +25,9 @@
 		E831B1AC36E0FA47B8C4F8DA /* TerminalView.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = TerminalView.m; sourceTree = "<group>"; };
 		EA299008B49E770D20B97D04 /* lib.rs */ = {isa = PBXFileReference; includeInIndex = 1; name = lib.rs; path = src/lib.rs; sourceTree = "<group>"; };
 		F955A045807CCFDBB30B03DC /* mTerm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mTerm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD0000000000000000000000 /* ColorProfiles.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ColorProfiles.h; sourceTree = "<group>"; };
+		AD0000000000000000000001 /* ColorProfiles.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorProfiles.m; sourceTree = "<group>"; };
+		AD0000000000000000000002 /* ColorSettings.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorSettings.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,6 +67,9 @@
 				AE8A1ED2C9264C85B1B19543 /* main.m */,
 				E831B1AC36E0FA47B8C4F8DA /* TerminalView.m */,
 				1378DDE047E067721197A767 /* TerminalView.h */,
+				AD0000000000000000000000 /* ColorProfiles.h */,
+				AD0000000000000000000001 /* ColorProfiles.m */,
+				AD0000000000000000000002 /* ColorSettings.m */,
 				BFCCD0A21189FD4D966057D3 /* Engine.h */,
 			);
 			name = mTerm;
@@ -183,6 +191,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				C70281AEE614FA5EF4EDAE6D /* main.m in Sources */,
+				BD0000000000000000000001 /* ColorProfiles.m in Sources */,
+				BD0000000000000000000002 /* ColorSettings.m in Sources */,
 				BADE999F7747271380612EB1 /* TerminalView.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
