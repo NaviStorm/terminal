@@ -1,5 +1,6 @@
 #import "ColorProfiles.h"
 
+NSNotificationName const MTBackgroundChanged = @"MTBackgroundChanged";
 NSNotificationName const MTProfilesChanged = @"MTProfilesChanged";
 typedef struct { uint32_t rgb[MTColorCount]; } MTColors;
 #define ORIGINAL 0x161616,0xb64040,0x419849,0xc09835,0x527dcc,0xa458ac,0x389696,0xc8c8c8,0x747474,0xff7676,0x75d581,0xedd274,0x88abff,0xd68cdc,0x78dddd,0xffffff
@@ -140,12 +141,15 @@ static BOOL ReadColor(id entry, uint32_t *result) {
         _name = [record[@"name"] copy] ?: @"Défaut";
         _light = [MTPalette fromData:record[@"palette"] fallback:0];
         _dark = record[@"dark"] ? [MTPalette fromData:record[@"dark"] fallback:0] : _light;
+        NSNumber *opacity = record[@"backgroundOpacity"];
+        _backgroundOpacity = opacity ? MAX(0, MIN(100, opacity.integerValue)) : 100;
         _separate = [record[@"separate"] boolValue];
     }
     return self;
 }
 - (NSDictionary *)record {
-    return @{@"id":_identifier, @"name":_name, @"palette":_light.data, @"dark":_dark.data, @"separate":@(_separate)};
+    return @{@"id":_identifier, @"name":_name, @"palette":_light.data, @"dark":_dark.data,
+             @"separate":@(_separate), @"backgroundOpacity":@(_backgroundOpacity)};
 }
 - (MTPalette *)paletteForAppearance:(NSAppearance *)appearance {
     if (!_separate) return _light;
@@ -196,7 +200,12 @@ static BOOL ReadColor(id entry, uint32_t *result) {
 - (MTProfile *)addCopyOf:(MTProfile *)source {
     MTProfile *p = [[MTProfile alloc] initWithRecord:nil];
     p.name = source ? [source.name stringByAppendingString:@" — copie"] : @"Nouveau profil";
-    if (source) { p.light = source.light; p.dark = source.dark; p.separate = source.separate; }
+    if (source) {
+        p.light = source.light;
+        p.dark = source.dark;
+        p.separate = source.separate;
+        p.backgroundOpacity = source.backgroundOpacity;
+    }
     [_items addObject:p];
     [self save];
     return p;

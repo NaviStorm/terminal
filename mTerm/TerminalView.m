@@ -47,8 +47,7 @@ static const CGFloat paneHeaderHeight = 23;
 - (void)mouseDown:(NSEvent *)event { [self.window makeFirstResponder:self.superview]; }
 - (void)closePane:(id)sender {
     TerminalView *pane = (TerminalView *)self.superview;
-    [pane stopSession];
-    [(id<MTTerminalWindowDelegate>)self.window.delegate terminalSessionDidEnd:pane];
+    [(id<MTTerminalWindowDelegate>)self.window.delegate requestCloseTerminal:pane];
 }
 - (void)openPaneMenu:(NSButton *)button {
     [self.window makeFirstResponder:self.superview];
@@ -105,13 +104,15 @@ static const NSInteger maximumFontSize = 72;
         _profile = MTProfiles.shared.defaultProfile;
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(profilesChanged:)
                                                    name:MTProfilesChanged object:MTProfiles.shared];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundChanged:)
+                                                   name:MTBackgroundChanged object:nil];
         _fd = -1;
         _lastMouseCell = -1;
         _anchor = _focus = -1;
         NSInteger size = [NSUserDefaults.standardUserDefaults integerForKey:fontSizeKey];
         if (size < minimumFontSize || size > maximumFontSize) size = 14;
         [self setTerminalFontSize:size savePreference:NO];
-        _parser = mt_new(1, 1);
+        _parser = mt_new(2, 2, (uint16_t)MTScrollbackLines());
         [self resizeGrid];
         [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeString]];
         [self startSession];
@@ -120,7 +121,7 @@ static const NSInteger maximumFontSize = 72;
 }
 
 - (BOOL)isFlipped { return YES; }
-- (BOOL)isOpaque { return YES; }
+- (BOOL)isOpaque { return _profile.backgroundOpacity == 100; }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)becomeFirstResponder {
     self.needsDisplay = YES;
@@ -143,7 +144,7 @@ static const NSInteger maximumFontSize = 72;
     CGFloat cellHeight = ceil(font.ascender - font.descender + font.leading);
     NSWindow *window = self.window;
     NSRect frame = window.frame;
-    BOOL resizeWindow = window.contentView == self && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
+    BOOL resizeWindow = window && ![self.superview isKindOfClass:NSSplitView.class] && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
     if (resizeWindow) {
         CGFloat width = MAX(window.contentMinSize.width, ceil(2 * inset + _cols * cellWidth));
         CGFloat height = MAX(window.contentMinSize.height, ceil(2 * inset + _rows * cellHeight));
@@ -219,7 +220,7 @@ static const NSInteger maximumFontSize = 72;
 - (void)resizeGrid {
     if (!_parser) return;
     uint16_t cols = MIN(4096, MAX(2, floor((self.bounds.size.width - 2*inset) / _cw)));
-    uint16_t rows = MIN(4096, MAX(1, floor((self.bounds.size.height - self.gridTop - inset) / _ch)));
+    uint16_t rows = MIN(4096, MAX(2, floor((self.bounds.size.height - self.gridTop - inset) / _ch)));
     if (rows == _rows && cols == _cols) return;
     _rows = rows;
     _cols = cols;
@@ -251,6 +252,15 @@ static const NSInteger maximumFontSize = 72;
         }
     }
     return _directory;
+}
+
+- (BOOL)hasForegroundJob {
+    pid_t foreground = _fd >= 0 ? tcgetpgrp(_fd) : -1;
+    return foreground > 0 && foreground != _shellPID;
+}
+
+- (void)openDirectoryInFinder:(id)sender {
+    if (![NSWorkspace.sharedWorkspace selectFile:nil inFileViewerRootedAtPath:self.currentDirectory]) NSBeep();
 }
 
 - (void)updateSessionTitle {
@@ -828,13 +838,42 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     return YES;
 }
 
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    if (self.window) [self refreshProfileBackground];
+}
+
+- (void)backgroundChanged:(NSNotification *)note {
+    if (note.object == _profile) [self refreshProfileBackground];
+}
+
+- (void)refreshProfileBackground {
+    [self applyBackgroundColor];
+    id<MTTerminalWindowDelegate> delegate = (id)self.window.delegate;
+    if ([delegate respondsToSelector:@selector(updateBackgroundForWindow:)])
+        [delegate updateBackgroundForWindow:self.window];
+}
+
+- (void)applyBackgroundColor {
+    NSColor *color = [[_profile paletteForAppearance:self.effectiveAppearance] color:MTBackground];
+    BOOL dim = _paneHeader && self.window.firstResponder != self;
+    if (dim) color = [color blendedColorWithFraction:0.32 ofColor:NSColor.grayColor];
+    CGFloat opacity = _profile.backgroundOpacity / 100.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.layer.backgroundColor = [color colorWithAlphaComponent:opacity].CGColor;
+    [CATransaction commit];
+}
+
 - (void)profilesChanged:(NSNotification *)note {
     if (![MTProfiles.shared.profiles containsObject:_profile]) _profile = MTProfiles.shared.defaultProfile;
+    [self refreshProfileBackground];
     self.needsDisplay = YES;
 }
 
 - (void)setProfile:(MTProfile *)profile {
     _profile = profile;
+    [self refreshProfileBackground];
     self.needsDisplay = YES;
 }
 
@@ -865,10 +904,9 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
 - (void)updateLayer {
     if (!_parser) return;
     MTPalette *palette = [_profile paletteForAppearance:self.effectiveAppearance];
-    NSColor *background = [palette color:MTBackground];
+    [self applyBackgroundColor];
     BOOL dim = [self.superview isKindOfClass:NSSplitView.class] && self.window.firstResponder != self;
     NSColor *veil = [NSColor colorWithWhite:0.5 alpha:1];
-    self.layer.backgroundColor = (dim ? [background blendedColorWithFraction:0.32 ofColor:veil] : background).CGColor;
 
     uint16_t rows = 0, cols = 0, row = 0, col = 0;
     mt_content_size(_parser, &rows, &cols);
@@ -912,8 +950,11 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     [NSGraphicsContext restoreGraphicsState];
     CGImageRef image = CGBitmapContextCreateImage(bitmap);
     CGContextRelease(bitmap);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     self.layer.contentsScale = scale;
     self.layer.contents = CFBridgingRelease(image);
+    [CATransaction commit];
 }
 
 - (void)drawCellsInRows:(uint16_t)rows columns:(uint16_t)cols palette:(MTPalette *)palette selection:(NSRange)selection {

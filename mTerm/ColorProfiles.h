@@ -22,10 +22,12 @@ enum { MTPaletteReference = 0x1000000 };
 @property(readonly) NSString *identifier;
 @property(strong) MTPalette *light, *dark;
 @property BOOL separate;
+@property NSInteger backgroundOpacity; // En pourcentage.
 - (MTPalette *)paletteForAppearance:(NSAppearance *)appearance;
 @end
 
 extern NSNotificationName const MTProfilesChanged;
+extern NSNotificationName const MTBackgroundChanged;
 @interface MTProfiles : NSObject
 + (instancetype)shared;
 @property(readonly) NSArray<MTProfile *> *profiles;
@@ -38,4 +40,6 @@ extern NSNotificationName const MTProfilesChanged;
 - (void)save;
 @end
 
+NSInteger MTScrollbackLines(void);
+extern NSString *const MTFoldOnTitlebarDoubleClick;
 void MTShowColorSettings(void);

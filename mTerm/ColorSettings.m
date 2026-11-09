@@ -1,10 +1,32 @@
 #import "ColorProfiles.h"
+#import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+
+NSString *const MTFoldOnTitlebarDoubleClick = @"FoldOnTitlebarDoubleClick";
+
+static NSString *const historyKey = @"ScrollbackLines";
+NSInteger MTScrollbackLines(void) {
+    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:historyKey];
+    return saved ? MAX(0, MIN(10000, saved.integerValue)) : 1000;
+}
 
 @interface MTSettingsCanvas : NSView
 @end
 @implementation MTSettingsCanvas
 - (BOOL)isFlipped { return YES; }
+@end
+
+@interface MTOpacitySlider : NSSlider
+@property(readonly) BOOL trackingMouse;
+@end
+@implementation MTOpacitySlider
+- (void)mouseDown:(NSEvent *)event {
+    _trackingMouse = YES;
+    double previous = self.doubleValue;
+    [super mouseDown:event];
+    _trackingMouse = NO;
+    if (self.doubleValue != previous) [MTProfiles.shared save];
+}
 @end
 
 @interface MTColorSettings : NSWindowController <NSWindowDelegate,NSTableViewDelegate,NSTableViewDataSource,NSTextFieldDelegate>
@@ -18,8 +40,12 @@ void MTShowColorSettings(void) {
 }
 
 @implementation MTColorSettings {
+    MTSettingsCanvas *_profilesPage, *_generalPage;
     MTProfile *_profile;
     NSTableView *_list;
+    MTOpacitySlider *_opacity;
+    NSTextField *_percentage;
+    CALayer *_previewBackground;
     NSTextField *_name, *_preview;
     NSButton *_separate, *_makeDefault, *_remove;
     NSSegmentedControl *_mode;
@@ -30,7 +56,7 @@ void MTShowColorSettings(void) {
 
 - (void)add:(NSView *)view frame:(NSRect)frame {
     view.frame = frame;
-    [self.window.contentView addSubview:view];
+    [_profilesPage addSubview:view];
 }
 
 - (void)label:(NSString *)title x:(CGFloat)x y:(CGFloat)y width:(CGFloat)width {
@@ -44,20 +70,66 @@ void MTShowColorSettings(void) {
 }
 
 - (instancetype)init {
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,770,493)
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,770,566)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:YES];
     if ((self = [super initWithWindow:window])) {
-        window.title = @"Réglages — Profils de couleurs";
+        window.title = @"Réglages";
         window.releasedWhenClosed = NO;
         window.tabbingMode = NSWindowTabbingModeDisallowed;
         window.delegate = self;
         window.contentView = [[MTSettingsCanvas alloc] initWithFrame:window.contentView.bounds];
         _profile = MTProfiles.shared.defaultProfile;
-        [self buildControls];
-        [self reload];
+        NSSegmentedControl *sections = [NSSegmentedControl segmentedControlWithLabels:@[@"Général", @"Profils de couleurs"]
+            trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeSection:)];
+        [sections sizeToFit];
+        [sections setFrameOrigin:NSMakePoint(round((770 - NSWidth(sections.frame)) / 2), 10)];
+        [window.contentView addSubview:sections];
+        sections.selectedSegment = 0;
+        _generalPage = [[MTSettingsCanvas alloc] initWithFrame:NSMakeRect(0,44,770,522)];
+        NSButton *fold = [NSButton checkboxWithTitle:@"Replier la fenêtre par double-clic sur la barre de titre"
+                                               target:self action:@selector(changeFoldPreference:)];
+        fold.state = [NSUserDefaults.standardUserDefaults boolForKey:MTFoldOnTitlebarDoubleClick];
+        [fold sizeToFit];
+        [fold setFrameOrigin:NSMakePoint(24,20)];
+        [_generalPage addSubview:fold];
+        NSTextField *label = [NSTextField labelWithString:@"Historique des nouvelles sessions"];
+        [label setFrameOrigin:NSMakePoint(24,66)];
+        [_generalPage addSubview:label];
+        NSPopUpButton *history = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(275,58,170,30) pullsDown:NO];
+        for (NSNumber *lines in @[@0, @250, @1000, @5000, @10000]) {
+            [history addItemWithTitle:[NSString stringWithFormat:@"%@ lignes", lines]];
+            history.lastItem.tag = lines.integerValue;
+        }
+        [history selectItemWithTag:MTScrollbackLines()];
+        history.target = self;
+        history.action = @selector(changeHistory:);
+        [_generalPage addSubview:history];
+        [window.contentView addSubview:_generalPage];
         [window center];
     }
     return self;
+}
+
+- (void)changeHistory:(NSPopUpButton *)sender {
+    [NSUserDefaults.standardUserDefaults setInteger:sender.selectedTag forKey:historyKey];
+}
+
+- (void)changeFoldPreference:(NSButton *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.state == NSControlStateValueOn forKey:MTFoldOnTitlebarDoubleClick];
+    [NSNotificationCenter.defaultCenter postNotificationName:MTFoldOnTitlebarDoubleClick object:nil];
+}
+
+- (void)changeSection:(NSSegmentedControl *)sender {
+    [self.window makeFirstResponder:nil];
+    BOOL general = sender.selectedSegment == 0;
+    if (!general && !_profilesPage) {
+        _profilesPage = [[MTSettingsCanvas alloc] initWithFrame:_generalPage.frame];
+        [self.window.contentView addSubview:_profilesPage];
+        [self buildControls];
+        [self reload];
+    }
+    _generalPage.hidden = !general;
+    _profilesPage.hidden = general;
 }
 
 - (void)buildControls {
@@ -83,7 +155,7 @@ void MTShowColorSettings(void) {
 
     NSBox *line = [NSBox new];
     line.boxType = NSBoxSeparator;
-    [self add:line frame:NSMakeRect(220,0,1,493)];
+    [self add:line frame:NSMakeRect(220,0,1,522)];
     [self label:@"Nom du profil" x:241 y:20 width:120];
     _name = [NSTextField new];
     _name.delegate = self;
@@ -126,11 +198,28 @@ void MTShowColorSettings(void) {
     [self label:@"Palette ANSI" x:241 y:277 width:170];
     [self label:@"Normales" x:241 y:312 width:75];
     [self label:@"Intenses" x:241 y:347 width:75];
-    [self label:@"Aperçu" x:241 y:393 width:100];
+    [self label:@"Opacité du fond" x:241 y:389 width:135];
+    _opacity = [MTOpacitySlider new];
+    _opacity.minValue = 0;
+    _opacity.maxValue = 100;
+    _opacity.continuous = YES;
+    _opacity.target = self;
+    _opacity.action = @selector(changeOpacity:);
+    [_opacity setAccessibilityLabel:@"Opacité du fond en pourcentage"];
+    [self add:_opacity frame:NSMakeRect(375,382,307,28)];
+    _percentage = [NSTextField labelWithString:@""];
+    _percentage.alignment = NSTextAlignmentRight;
+    [self add:_percentage frame:NSMakeRect(685,388,60,20)];
+    [self label:@"Aperçu" x:241 y:431 width:100];
+    NSView *previewHost = [[NSView alloc] initWithFrame:NSMakeRect(241,458,504,33)];
+    previewHost.wantsLayer = YES;
+    _previewBackground = [CALayer layer];
+    _previewBackground.frame = previewHost.bounds;
+    [previewHost.layer addSublayer:_previewBackground];
+    [_profilesPage addSubview:previewHost];
     _preview = [NSTextField labelWithString:@""];
-    _preview.drawsBackground = YES;
     _preview.alignment = NSTextAlignmentCenter;
-    [self add:_preview frame:NSMakeRect(241,422,504,33)];
+    [self add:_preview frame:NSMakeRect(241,458,504,33)];
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return MTProfiles.shared.profiles.count; }
@@ -185,7 +274,9 @@ void MTShowColorSettings(void) {
     [_presets addItemWithTitle:@"Importer un fichier .itermcolors…"];
     [_presets selectItemAtIndex:index];
     for (NSColorWell *well in _wells) well.color = [palette color:well.tag];
-    _preview.backgroundColor = [palette color:MTBackground];
+    _opacity.integerValue = _profile.backgroundOpacity;
+    _previewBackground.backgroundColor = [palette color:MTBackground].CGColor;
+    [self refreshPreviewBackground];
     NSMutableAttributedString *sample = [[NSMutableAttributedString alloc] initWithString:@"❯  mTerm   Documents   sélection   ▏"
         attributes:@{NSForegroundColorAttributeName:[palette color:MTForeground],NSFontAttributeName:[NSFont monospacedSystemFontOfSize:14 weight:NSFontWeightRegular]}];
     for (NSString *part in @[@"Documents",@"sélection",@"▏"]) {
@@ -196,6 +287,24 @@ void MTShowColorSettings(void) {
     }
     _preview.attributedStringValue = sample;
     _refreshing = NO;
+}
+
+- (void)refreshPreviewBackground {
+    _percentage.stringValue = [NSString stringWithFormat:@"%ld %%", (long)_profile.backgroundOpacity];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _previewBackground.opacity = _profile.backgroundOpacity / 100.0;
+    [CATransaction commit];
+}
+
+- (void)changeOpacity:(MTOpacitySlider *)slider {
+    NSInteger value = lround(slider.doubleValue);
+    if (_profile.backgroundOpacity == value) return;
+    _profile.backgroundOpacity = value;
+    [self refreshPreviewBackground];
+    if (slider.trackingMouse)
+        [NSNotificationCenter.defaultCenter postNotificationName:MTBackgroundChanged object:_profile];
+    else [MTProfiles.shared save];
 }
 
 - (void)controlTextDidEndEditing:(NSNotification *)note {

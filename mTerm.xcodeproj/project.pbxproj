@@ -3,33 +3,33 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 46;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A303FF04FE00000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A303FF04FE00000000000001 /* Assets.xcassets */; };
 		BADE999F7747271380612EB1 /* TerminalView.m in Sources */ = {isa = PBXBuildFile; fileRef = E831B1AC36E0FA47B8C4F8DA /* TerminalView.m */; };
-		C70281AEE614FA5EF4EDAE6D /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = AE8A1ED2C9264C85B1B19543 /* main.m */; };
-		D403C4387C927FA8ABE14D39 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC449E4A03BC8DA72F19FC04 /* Cocoa.framework */; };
 		BD0000000000000000000001 /* ColorProfiles.m in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000001 /* ColorProfiles.m */; };
 		BD0000000000000000000002 /* ColorSettings.m in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000002 /* ColorSettings.m */; };
-		A303FF04FE00000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A303FF04FE00000000000001 /* Assets.xcassets */; };
+		C70281AEE614FA5EF4EDAE6D /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = AE8A1ED2C9264C85B1B19543 /* main.m */; };
+		D403C4387C927FA8ABE14D39 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC449E4A03BC8DA72F19FC04 /* Cocoa.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1378DDE047E067721197A767 /* TerminalView.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = TerminalView.h; sourceTree = "<group>"; };
 		33F4EA8E2726D8DE812241E4 /* build-engine.sh */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.script.sh; name = "build-engine.sh"; path = "scripts/build-engine.sh"; sourceTree = "<group>"; };
-		492F7DA185A2E7BE63F15E9D /* Cargo.toml */ = {isa = PBXFileReference; includeInIndex = 1; path = Cargo.toml; sourceTree = "<group>"; };
-		705FBB5E0C7715E66F084391 /* Cargo.lock */ = {isa = PBXFileReference; includeInIndex = 1; path = Cargo.lock; sourceTree = "<group>"; };
+		492F7DA185A2E7BE63F15E9D /* Cargo.toml */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = Cargo.toml; sourceTree = "<group>"; };
+		705FBB5E0C7715E66F084391 /* Cargo.lock */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = Cargo.lock; sourceTree = "<group>"; };
+		A303FF04FE00000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AD0000000000000000000000 /* ColorProfiles.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ColorProfiles.h; sourceTree = "<group>"; };
+		AD0000000000000000000001 /* ColorProfiles.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorProfiles.m; sourceTree = "<group>"; };
+		AD0000000000000000000002 /* ColorSettings.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorSettings.m; sourceTree = "<group>"; };
 		AE8A1ED2C9264C85B1B19543 /* main.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		BFCCD0A21189FD4D966057D3 /* Engine.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = Engine.h; sourceTree = "<group>"; };
 		CC449E4A03BC8DA72F19FC04 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		E831B1AC36E0FA47B8C4F8DA /* TerminalView.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = TerminalView.m; sourceTree = "<group>"; };
-		EA299008B49E770D20B97D04 /* lib.rs */ = {isa = PBXFileReference; includeInIndex = 1; name = lib.rs; path = src/lib.rs; sourceTree = "<group>"; };
+		EA299008B49E770D20B97D04 /* lib.rs */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; name = lib.rs; path = src/lib.rs; sourceTree = "<group>"; };
 		F955A045807CCFDBB30B03DC /* mTerm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mTerm.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AD0000000000000000000000 /* ColorProfiles.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ColorProfiles.h; sourceTree = "<group>"; };
-		AD0000000000000000000001 /* ColorProfiles.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorProfiles.m; sourceTree = "<group>"; };
-		AD0000000000000000000002 /* ColorSettings.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorSettings.m; sourceTree = "<group>"; };
-		A303FF04FE00000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,7 +59,6 @@
 				705FBB5E0C7715E66F084391 /* Cargo.lock */,
 				EA299008B49E770D20B97D04 /* lib.rs */,
 			);
-			name = Engine;
 			path = Engine;
 			sourceTree = "<group>";
 		};
@@ -75,7 +74,6 @@
 				AD0000000000000000000002 /* ColorSettings.m */,
 				BFCCD0A21189FD4D966057D3 /* Engine.h */,
 			);
-			name = mTerm;
 			path = mTerm;
 			sourceTree = "<group>";
 		};
@@ -113,7 +111,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0505716D426C177934A68886 /* Build configuration list for PBXNativeTarget "mTerm" */;
 			buildPhases = (
-				DE23B4449DC9437399C8074E /* Calculer le numéro de build Git */,
+				DE23B4449DC9437399C8074E /* Calculer le numéro de build Git */,
 				D0BCC3BD2AEED70684BA390D /* Compiler le moteur Rust */,
 				FF81E008ECB6B45539EC9044 /* Sources */,
 				6F83147A5F6D73870EE8A7D3 /* Frameworks */,
@@ -146,8 +144,6 @@
 				Base,
 			);
 			mainGroup = B9C7B5DEEB0EBE3F06983A2B;
-			minimizedProjectReferenceProxies = 0;
-			preferredProjectObjectVersion = 77;
 			productRefGroup = 3809932C536E94B359624D25 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -186,16 +182,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$SRCROOT/scripts/build-engine.sh\"";
+			shellScript = "/bin/sh \"$SRCROOT/scripts/build-engine.sh\"\n";
 		};
-		DE23B4449DC9437399C8074E /* Calculer le numéro de build Git */ = {
+		DE23B4449DC9437399C8074E /* Calculer le numéro de build Git */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
-			files = ();
-			inputPaths = ("$(SRCROOT)/mTerm/Info.plist",);
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/mTerm/Info.plist",
+			);
 			name = "Calculer le numéro de build Git";
-			outputPaths = ("$(DERIVED_FILE_DIR)/BuildVersion.plist",);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/BuildVersion.plist",
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -eu\ncount=$(git -C \"$SRCROOT\" rev-list --count HEAD)\nplist=\"$SCRIPT_OUTPUT_FILE_0\"\ncp \"$SCRIPT_INPUT_FILE_0\" \"$plist\"\nplutil -insert CFBundleVersion -string \"$count\" \"$plist\"\n";
@@ -224,22 +225,28 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_ARC = YES;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/BuildVersion.plist";
+				DEVELOPMENT_TEAM = RTMWCLXVLL;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.1;
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/BuildVersion.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 1.0.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(BUILT_PRODUCTS_DIR)/libmterm_engine.a",
 					"-framework",
 					AppKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.mterm.terminal;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tandreuperouges.terminal;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -366,22 +373,28 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_ARC = YES;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/BuildVersion.plist";
+				DEVELOPMENT_TEAM = RTMWCLXVLL;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 0.1;
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/BuildVersion.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 1.0.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(BUILT_PRODUCTS_DIR)/libmterm_engine.a",
 					"-framework",
 					AppKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.mterm.terminal;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tandreuperouges.terminal;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 			};
 			name = Debug;

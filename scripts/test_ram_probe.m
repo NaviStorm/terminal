@@ -42,6 +42,11 @@ static double report(const char *stage, int expected) {
         headers.allObjects.count != (expected == 1 ? 0 : expected))
         fail([NSString stringWithFormat:@"%s : nombre de shells, de vues ou de bandeaux inattendu", stage]);
 
+    for (NSView *pane in panes) {
+        if (NSIsEmptyRect(pane.visibleRect) || NSIsEmptyRect(pane.bounds))
+            fail([NSString stringWithFormat:@"%s : volet sans surface visible", stage]);
+    }
+
     uint64_t shellBytes = 0;
     for (int i = 0; i < count; i++) {
         char name[PROC_PIDPATHINFO_MAXSIZE];
@@ -52,7 +57,8 @@ static double report(const char *stage, int expected) {
         shellBytes += usage.ri_phys_footprint;
     }
     double mb = footprint() / 1e6;
-    printf("| %s | %.1f Mo | %.1f Mo |\n", stage, mb, shellBytes / 1e6);
+    NSString *label = [@(stage) stringByPaddingToLength:28 withString:@" " startingAtIndex:0];
+    printf("%s  %9.1f Mo  %27.1f Mo\n", label.UTF8String, mb, shellBytes / 1e6);
     fflush(stdout);
     return mb;
 }
@@ -68,8 +74,33 @@ static void startPeakSampler(void) {
     dispatch_resume(sampler);
 }
 
+// La copie de test a son propre bundle ID. Amorcer uniquement ses préférences
+// de profil avant que mTerm ne crée la première session.
+static void loadProfiles(void) {
+    NSString *source = @(getenv("MTERM_TEST_SOURCE"));
+    NSString *requested = @(getenv("MTERM_TEST_PROFILE"));
+    unsetenv("MTERM_TEST_SOURCE");
+    unsetenv("MTERM_TEST_PROFILE");
+    NSDictionary *stored = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("ColorProfiles"), (__bridge CFStringRef)source));
+    NSMutableDictionary *profiles = [stored mutableCopy];
+    if (requested.length) {
+        NSString *match = nil;
+        for (NSDictionary *record in profiles[@"items"]) {
+            if ([requested isEqual:record[@"name"]]) {
+                if (match) fail([NSString stringWithFormat:@"plusieurs profils portent le nom « %@ »", requested]);
+                match = record[@"id"];
+            }
+        }
+        if (!match && (profiles[@"items"] || ![requested isEqual:@"Défaut"]))
+            fail([NSString stringWithFormat:@"profil « %@ » introuvable dans l’application mesurée", requested]);
+        if (match) profiles[@"default"] = match;
+    }
+    if (profiles) [NSUserDefaults.standardUserDefaults registerDefaults:@{@"ColorProfiles":profiles}];
+}
+
 __attribute__((constructor)) static void startTest(void) {
     unsetenv("DYLD_INSERT_LIBRARIES"); // Les shells sont mesurés sans la sonde.
+    @autoreleasepool { loadProfiles(); }
     dispatch_async(dispatch_get_main_queue(), ^{
         panes = NSHashTable.weakObjectsHashTable;
         headers = NSHashTable.weakObjectsHashTable;
@@ -80,15 +111,25 @@ __attribute__((constructor)) static void startTest(void) {
                 case 1: {
                     window = [[(id)app valueForKey:@"windows"] anyObject];
                     if (!window) fail(@"fenêtre de test introuvable");
-                    [window setFrame:NSMakeRect(144,519,3058,1053) display:YES];
+                    NSRect screen = (window.screen ?: NSScreen.mainScreen).visibleFrame;
+                    NSSize size = NSMakeSize(MIN(3058, NSWidth(screen)), MIN(1053, NSHeight(screen)));
+                    [window setFrame:NSMakeRect(NSMidX(screen) - size.width / 2, NSMidY(screen) - size.height / 2,
+                                                size.width, size.height) display:YES];
                     [NSApp activateIgnoringOtherApps:YES];
                     [window makeKeyAndOrderFront:nil];
                     NSBundle *bundle = NSBundle.mainBundle;
-                    printf("mTerm %s (%s) — %.0f × %.0f points, écran %.1f×\n\n",
+                    printf("mTerm %s (%s) — %.0f × %.0f points, écran %.1f×\n",
                            [[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] UTF8String],
                            [[bundle objectForInfoDictionaryKey:@"CFBundleVersion"] UTF8String],
                            NSWidth(window.frame), NSHeight(window.frame), window.backingScaleFactor);
-                    puts("| État | RAM de mTerm | RAM des shells zsh, séparément |\n|---|---:|---:|");
+                    observeViews(window.contentView);
+                    id profile = [panes.anyObject valueForKey:@"profile"];
+                    if (!profile) fail(@"profil de la session de test introuvable");
+                    printf("Profil : %s\n\n", [[profile valueForKey:@"name"] UTF8String]);
+                    printf("%s  %s  %s\n", [@"État" stringByPaddingToLength:28 withString:@" " startingAtIndex:0].UTF8String,
+                           "RAM de mTerm", "RAM des shells zsh, séparément");
+                    puts("----------------------------  ------------  ------------------------------");
+                    fflush(stdout);
                     break;
                 }
                 case 16: initialFootprint = report("1 volet au départ", 1); break;

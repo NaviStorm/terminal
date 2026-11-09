@@ -94,8 +94,12 @@ extern "C" fn mt_take_title(p: &mut Parser) -> *mut c_char {
 }
 
 #[no_mangle]
-extern "C" fn mt_new(rows: u16, cols: u16) -> *mut Parser {
-    Box::into_raw(Box::new(parser(rows.max(1), cols.max(1), 1000)))
+extern "C" fn mt_new(rows: u16, cols: u16, history: u16) -> *mut Parser {
+    Box::into_raw(Box::new(parser(
+        rows.max(2),
+        cols.max(2),
+        usize::from(history),
+    )))
 }
 
 #[no_mangle]
@@ -110,7 +114,7 @@ unsafe extern "C" fn mt_feed(p: &mut Parser, bytes: *const u8, len: usize) {
 
 #[no_mangle]
 extern "C" fn mt_resize(p: &mut Parser, rows: u16, cols: u16) {
-    p.screen_mut().set_size(rows.max(1), cols.max(1));
+    p.screen_mut().set_size(rows.max(2), cols.max(2));
 }
 
 #[no_mangle]
@@ -458,6 +462,16 @@ unsafe extern "C" fn mt_find(
 mod tests {
     use super::*;
     #[test]
+    fn tiny_pane_wraps_shell_output_after_resize() {
+        let mut p = unsafe { Box::from_raw(mt_new(1, 1, 1000)) };
+        for (rows, cols) in [(1, 1), (24, 80), (1, 4)] {
+            mt_resize(&mut p, rows, cols);
+            p.process("abcdefghijkl界".as_bytes());
+            assert_eq!(p.screen().size(), (rows.max(2), cols.max(2)));
+        }
+    }
+
+    #[test]
     fn content_extent_tracks_wide_glyphs_backgrounds_and_scrollback() {
         let mut p = parser(2, 8, 100);
         let extent = |p: &Parser| {
@@ -590,6 +604,18 @@ mod tests {
         let len = mt_mouse_report(&p, 3, false, true, 0, 1, 2, &mut out);
         assert_eq!(&out[..len], b"\x1b[<35;3;2M");
     }
+    #[test]
+    fn session_history_respects_configured_limit() {
+        for limit in [0, 3, 250] {
+            let mut p = unsafe { Box::from_raw(mt_new(2, 8, limit)) };
+            for _ in 0..300 {
+                p.process(b"ligne\r\n");
+            }
+            p.screen_mut().set_scrollback(usize::MAX);
+            assert_eq!(p.screen().scrollback(), usize::from(limit));
+        }
+    }
+
     #[test]
     fn streaming_history_and_alternate_screen() {
         let mut p = parser(2, 8, 1000);

@@ -6,11 +6,164 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 static char tabOrderContext;
 
+@interface MTTitlebarBackground : NSView
+@end
+@implementation MTTitlebarBackground
+- (BOOL)wantsUpdateLayer { return YES; }
+- (void)updateLayer { self.layer.backgroundColor = [NSColor.windowBackgroundColor colorWithAlphaComponent:1].CGColor; }
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
+@interface MTSessionHost : NSView
+@end
+@implementation MTSessionHost
+- (void)layout {
+    [super layout];
+    for (NSView *child in self.subviews) child.frame = self.bounds;
+}
+- (void)didAddSubview:(NSView *)subview {
+    [super didAddSubview:subview];
+    subview.frame = self.bounds;
+    self.needsLayout = YES;
+}
+@end
+
 @interface MTTerminalWindow : NSWindow
+@property(nonatomic,readonly) NSView *sessionHost;
+@property(nonatomic,readonly) BOOL folded;
+@property(nonatomic,readonly) TerminalView *zoomedPane;
+- (void)zoomPane:(TerminalView *)pane;
+- (void)restorePaneLayout;
+- (void)restoreFoldedWindow;
+- (void)prepareSessionHost;
 - (void)observeTabOrder;
 @end
 
-@implementation MTTerminalWindow
+@implementation MTTerminalWindow {
+    NSView *_panePlaceholder;
+    NSLayoutConstraint *_hostBottom, *_fixedHostHeight;
+    CGFloat _expandedHeight;
+    NSSize _expandedMinimum, _expandedMaximum;
+    __weak NSView *_foldedResponder;
+    BOOL _consumeMouseUp;
+}
+
+- (void)zoomPane:(TerminalView *)pane {
+    if (![pane.superview isKindOfClass:NSSplitView.class] || _zoomedPane) return;
+    _zoomedPane = pane;
+    _panePlaceholder = [[NSView alloc] initWithFrame:pane.frame];
+    _panePlaceholder.autoresizingMask = pane.autoresizingMask;
+    [pane.superview replaceSubview:pane with:_panePlaceholder];
+    _sessionHost.subviews.firstObject.hidden = YES;
+    [_sessionHost addSubview:pane];
+    [self makeFirstResponder:pane];
+}
+
+- (void)restorePaneLayout {
+    TerminalView *pane = _zoomedPane;
+    if (!pane) return;
+    [pane removeFromSuperview];
+    _sessionHost.subviews.firstObject.hidden = NO;
+    pane.frame = _panePlaceholder.frame;
+    [_panePlaceholder.superview replaceSubview:_panePlaceholder with:pane];
+    _panePlaceholder = nil;
+    _zoomedPane = nil;
+    [self makeFirstResponder:pane];
+}
+
+- (void)foldWindow {
+    NSRect frame = self.frame;
+    _expandedHeight = NSHeight(frame);
+    _expandedMinimum = self.minSize;
+    _expandedMaximum = self.maxSize;
+    _foldedResponder = [self.firstResponder isKindOfClass:NSView.class] ? (NSView *)self.firstResponder : nil;
+    _folded = YES;
+    _fixedHostHeight = [_sessionHost.heightAnchor constraintEqualToConstant:NSHeight(_sessionHost.bounds)];
+    _hostBottom.active = NO;
+    _fixedHostHeight.active = YES;
+    _sessionHost.hidden = YES;
+    // Le bord supérieur reste au même endroit et la grille garde sa hauteur.
+    CGFloat height = NSHeight(frame) - NSHeight(self.contentLayoutRect);
+    frame.origin.y = NSMaxY(frame) - height;
+    frame.size.height = height;
+    self.minSize = NSMakeSize(_expandedMinimum.width, height);
+    self.maxSize = NSMakeSize(_expandedMaximum.width, height);
+    [self setFrame:frame display:YES];
+}
+
+- (void)restoreFoldedWindow {
+    if (!_folded) return;
+    NSRect frame = self.frame;
+    frame.origin.y = NSMaxY(frame) - _expandedHeight;
+    frame.size.height = _expandedHeight;
+    self.maxSize = _expandedMaximum;
+    [self setFrame:frame display:NO];
+    self.minSize = _expandedMinimum;
+    _fixedHostHeight.active = NO;
+    _fixedHostHeight = nil;
+    _hostBottom.active = YES;
+    _sessionHost.hidden = NO;
+    _folded = NO;
+    [self.contentView layoutSubtreeIfNeeded];
+    if (_foldedResponder.window == self) [self makeFirstResponder:_foldedResponder];
+    _foldedResponder = nil;
+}
+
+- (void)sendEvent:(NSEvent *)event {
+    if (event.type == NSEventTypeLeftMouseUp && _consumeMouseUp) {
+        _consumeMouseUp = NO;
+        return;
+    }
+    if (event.type == NSEventTypeLeftMouseDown) _consumeMouseUp = NO;
+    if (event.type == NSEventTypeLeftMouseDown && event.clickCount == 2 &&
+        !(self.styleMask & NSWindowStyleMaskFullScreen) &&
+        [NSUserDefaults.standardUserDefaults boolForKey:MTFoldOnTitlebarDoubleClick]) {
+        NSPoint point = event.locationInWindow;
+        NSRect title = [NSWindow contentRectForFrameRect:NSMakeRect(0,0,NSWidth(self.frame),NSHeight(self.frame))
+                                                styleMask:NSWindowStyleMaskTitled];
+        if (point.y >= NSMaxY(title)) {
+            NSView *frameView = self.contentView.superview;
+            NSView *hit = [frameView hitTest:[frameView convertPoint:point fromView:nil]];
+            while (hit && ![hit isKindOfClass:NSControl.class]) hit = hit.superview;
+            if (!hit || [hit isKindOfClass:NSTextField.class]) {
+                if (_folded) [self restoreFoldedWindow]; else [self foldWindow];
+                _consumeMouseUp = YES;
+                return;
+            }
+        }
+    }
+    [super sendEvent:event];
+}
+
+- (void)foldPreferenceChanged:(NSNotification *)note {
+    if (![NSUserDefaults.standardUserDefaults boolForKey:MTFoldOnTitlebarDoubleClick]) [self restoreFoldedWindow];
+}
+- (void)prepareSessionHost {
+    NSView *root = self.contentView;
+    NSLayoutGuide *guide = self.contentLayoutGuide;
+    _sessionHost = [MTSessionHost new];
+    MTTitlebarBackground *bar = [MTTitlebarBackground new];
+    bar.wantsLayer = YES;
+    bar.translatesAutoresizingMaskIntoConstraints = NO;
+    _sessionHost.translatesAutoresizingMaskIntoConstraints = NO;
+    [root addSubview:bar];
+    [root addSubview:_sessionHost];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(foldPreferenceChanged:)
+                                                 name:MTFoldOnTitlebarDoubleClick object:nil];
+    _hostBottom = [_sessionHost.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor];
+    [NSLayoutConstraint activateConstraints:@[
+        [_sessionHost.topAnchor constraintEqualToAnchor:guide.topAnchor],
+        _hostBottom,
+        [_sessionHost.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
+        [_sessionHost.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
+        [bar.topAnchor constraintEqualToAnchor:root.topAnchor],
+        [bar.bottomAnchor constraintEqualToAnchor:_sessionHost.topAnchor],
+        [bar.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [bar.trailingAnchor constraintEqualToAnchor:root.trailingAnchor]
+    ]];
+    [root layoutSubtreeIfNeeded];
+}
 - (void)observeTabOrder {
     [self addObserver:self forKeyPath:@"tabGroup.windows" options:NSKeyValueObservingOptionInitial context:&tabOrderContext];
 }
@@ -152,6 +305,7 @@ static char tabOrderContext;
     NSMenuItem *horizontal = [session addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
     horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     horizontal.target = self;
+    [self addZoomItemToMenu:session];
     NSMenu *navigation = [[NSMenu alloc] initWithTitle:@"Activer un volet"];
     [session addItemWithTitle:navigation.title action:nil keyEquivalent:@""].submenu = navigation;
     NSArray *directions = @[@"À gauche", @"À droite", @"Au-dessus", @"En dessous"];
@@ -187,10 +341,26 @@ static char tabOrderContext;
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+static BOOL HasTransparentPane(NSView *view) {
+    if ([view isKindOfClass:TerminalView.class]) return ((TerminalView *)view).profile.backgroundOpacity < 100;
+    for (NSView *child in view.subviews) if (HasTransparentPane(child)) return YES;
+    return NO;
+}
+
+- (void)updateBackgroundForWindow:(NSWindow *)window {
+    BOOL opaque = !HasTransparentPane(window.contentView);
+    if (window.opaque != opaque) {
+        window.backgroundColor = opaque ? NSColor.windowBackgroundColor : NSColor.clearColor;
+        window.opaque = opaque;
+        [window invalidateShadow];
+    }
+}
+
 - (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
+    [(MTTerminalWindow *)parent restoreFoldedWindow];
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
     MTTerminalWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
-        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView
         backing:NSBackingStoreBuffered defer:NO];
     window.title = @"mTerm";
     window.releasedWhenClosed = NO;
@@ -201,9 +371,13 @@ static char tabOrderContext;
     if (!parent && (_windows.count || ![window setFrameUsingName:terminalFrameName])) {
         [window center];
     }
-    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.contentView.bounds
+    [window prepareSessionHost];
+    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.sessionHost.bounds
                                                                    directory:parent ? [self activeTerminal].currentDirectory : nil];
-    window.contentView = view;
+    view.frame = window.sessionHost.bounds;
+    view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [window.sessionHost addSubview:view];
+    [self updateBackgroundForWindow:window];
     [_windows addObject:window];
     if (parent) {
         window.tabbingMode = NSWindowTabbingModeAutomatic;
@@ -245,6 +419,19 @@ static char tabOrderContext;
     [tab makeKeyAndOrderFront:nil];
 }
 
+- (void)addZoomItemToMenu:(NSMenu *)menu {
+    NSMenuItem *zoom = [menu addItemWithTitle:@"Agrandir le volet actif" action:@selector(togglePaneZoom:) keyEquivalent:@"\r"];
+    zoom.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    zoom.target = self;
+}
+
+- (void)togglePaneZoom:(id)sender {
+    TerminalView *current = [self activeTerminal];
+    MTTerminalWindow *window = (MTTerminalWindow *)current.window;
+    if (window.zoomedPane) [window restorePaneLayout];
+    else [window zoomPane:current];
+}
+
 - (NSMenu *)menuForTerminal:(TerminalView *)terminal {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Session"];
     [menu addItemWithTitle:@"Nouvelle fenêtre" action:@selector(newWindow:) keyEquivalent:@"n"].target = self;
@@ -256,8 +443,10 @@ static char tabOrderContext;
     NSMenuItem *horizontal = [menu addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
     horizontal.target = self;
     horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [self addZoomItemToMenu:menu];
     [menu addItemWithTitle:@"Déplacer le volet vers une nouvelle fenêtre" action:@selector(detachPane:) keyEquivalent:@""].target = self;
     [menu addItem:NSMenuItem.separatorItem];
+    [menu addItemWithTitle:@"Ouvrir le dossier local dans le Finder" action:@selector(openDirectoryInFinder:) keyEquivalent:@""].target = terminal;
     [menu addItemWithTitle:@"Copier" action:@selector(copy:) keyEquivalent:@"c"].target = terminal;
     [menu addItemWithTitle:@"Coller" action:@selector(paste:) keyEquivalent:@"v"].target = terminal;
     [menu addItemWithTitle:@"Sélectionner le texte visible" action:@selector(selectVisibleText:) keyEquivalent:@""].target = terminal;
@@ -294,7 +483,13 @@ static char tabOrderContext;
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(splitVertically:) || item.action == @selector(splitHorizontally:) ||
         item.action == @selector(selectProfile:) || item.action == @selector(focusNeighbor:)) return [self activeTerminal] != nil;
-    if (item.action == @selector(detachPane:)) return [[self activeTerminal].superview isKindOfClass:NSSplitView.class];
+    if (item.action == @selector(togglePaneZoom:) || item.action == @selector(detachPane:)) {
+        TerminalView *current = [self activeTerminal];
+        BOOL zoomed = ((MTTerminalWindow *)current.window).zoomedPane != nil;
+        if (item.action == @selector(togglePaneZoom:))
+            item.title = zoomed ? @"Rétablir la disposition des volets" : @"Agrandir le volet actif";
+        return zoomed || [current.superview isKindOfClass:NSSplitView.class];
+    }
     if (item.action == @selector(closeSession:)) return NSApp.keyWindow != nil;
     return YES;
 }
@@ -302,6 +497,7 @@ static char tabOrderContext;
 - (void)focusNeighbor:(NSMenuItem *)sender {
     TerminalView *current = [self activeTerminal];
     if (!current) return;
+    [(MTTerminalWindow *)current.window restorePaneLayout];
     unichar arrow = [sender.keyEquivalent characterAtIndex:0];
     BOOL horizontal = arrow == NSLeftArrowFunctionKey || arrow == NSRightArrowFunctionKey;
     BOOL forward = arrow == NSRightArrowFunctionKey || arrow == NSUpArrowFunctionKey;
@@ -311,7 +507,7 @@ static char tabOrderContext;
     CGFloat high = horizontal ? NSMaxY(source) : NSMaxX(source);
     CGFloat bestGap = CGFLOAT_MAX, bestOverlap = 0;
     TerminalView *best = nil;
-    NSMutableArray<NSView *> *pending = [NSMutableArray arrayWithObject:current.window.contentView];
+    NSMutableArray<NSView *> *pending = [((MTTerminalWindow *)current.window).sessionHost.subviews mutableCopy];
     while (pending.count) {
         NSView *view = pending.lastObject;
         [pending removeLastObject];
@@ -338,17 +534,17 @@ static char tabOrderContext;
     if (best) [current.window makeFirstResponder:best];
 }
 
-- (void)replacePane:(NSView *)old with:(NSView *)replacement inWindow:(NSWindow *)window {
+- (void)replacePane:(NSView *)old with:(NSView *)replacement {
     replacement.frame = old.frame;
     replacement.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    if (old == window.contentView) window.contentView = replacement;
-    else [old.superview replaceSubview:old with:replacement];
+    [old.superview replaceSubview:old with:replacement];
 }
 
 - (void)splitActivePaneVertically:(BOOL)vertical {
     TerminalView *current = [self activeTerminal];
     if (!current) return;
     NSWindow *window = current.window;
+    [(MTTerminalWindow *)window restorePaneLayout];
     NSSplitView *split = [[NSSplitView alloc] initWithFrame:current.frame];
     split.vertical = vertical;
     split.dividerStyle = NSSplitViewDividerStyleThin;
@@ -361,7 +557,7 @@ static char tabOrderContext;
     else pane.size.height = half;
     TerminalView *next = [[TerminalView alloc] initWithFrame:pane directory:current.currentDirectory];
     next.profile = current.profile;
-    [self replacePane:current with:split inWindow:window];
+    [self replacePane:current with:split];
     current.frame = pane;
     [split addSubview:current];
     [split addSubview:next];
@@ -369,6 +565,7 @@ static char tabOrderContext;
     [split adjustSubviews];
     [split setPosition:half ofDividerAtIndex:0];
     [window makeFirstResponder:next];
+    [self updateBackgroundForWindow:window];
 }
 
 - (void)splitVertically:(id)sender { [self splitActivePaneVertically:YES]; }
@@ -387,7 +584,8 @@ static char tabOrderContext;
     NSView *remaining = split.subviews.firstObject == current ? split.subviews.lastObject : split.subviews.firstObject;
     [remaining removeFromSuperview];
     [current removeFromSuperview];
-    [self replacePane:split with:remaining inWindow:window];
+    [self replacePane:split with:remaining];
+    [self updateBackgroundForWindow:window];
     if ([previousFocus isKindOfClass:TerminalView.class] && previousFocus != current) {
         [window makeFirstResponder:previousFocus];
         return;
@@ -399,24 +597,59 @@ static char tabOrderContext;
 
 - (void)detachPane:(id)sender {
     TerminalView *current = [self activeTerminal];
+    [(MTTerminalWindow *)current.window restorePaneLayout];
     if (![current.superview isKindOfClass:NSSplitView.class]) return;
     [self removePaneFromSplit:current];
     [self openAlongside:nil movingTerminal:current];
 }
 
 - (void)terminalSessionDidEnd:(TerminalView *)terminal {
+    [(MTTerminalWindow *)terminal.window restorePaneLayout];
     if ([terminal.superview isKindOfClass:NSSplitView.class]) {
         [self removePaneFromSplit:terminal];
-    } else if (terminal.window.contentView == terminal) {
+    } else if (terminal.window && terminal.superview == ((MTTerminalWindow *)terminal.window).sessionHost) {
         [terminal.window close];
     }
+}
+
+static BOOL ContainsForegroundJob(NSView *view) {
+    if ([view isKindOfClass:TerminalView.class]) return [(TerminalView *)view hasForegroundJob];
+    for (NSView *child in view.subviews) if (ContainsForegroundJob(child)) return YES;
+    return NO;
+}
+
+- (BOOL)confirmInterrupt {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Interrompre la commande en cours ?";
+    alert.informativeText = @"La fermeture peut interrompre les commandes au premier plan.";
+    [alert addButtonWithTitle:@"Annuler"];
+    [alert addButtonWithTitle:@"Fermer"];
+    return alert.runModal == NSAlertSecondButtonReturn;
+}
+
+- (BOOL)windowShouldClose:(NSWindow *)window {
+    return !ContainsForegroundJob(window.contentView) || [self confirmInterrupt];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    for (NSWindow *window in _windows) {
+        if (ContainsForegroundJob(window.contentView))
+            return [self confirmInterrupt] ? NSTerminateNow : NSTerminateCancel;
+    }
+    return NSTerminateNow;
+}
+
+- (void)requestCloseTerminal:(TerminalView *)terminal {
+    if (terminal.hasForegroundJob && ![self confirmInterrupt]) return;
+    if (!terminal.window) return;
+    [terminal stopSession];
+    [self terminalSessionDidEnd:terminal];
 }
 
 - (void)closeSession:(id)sender {
     TerminalView *current = [self activeTerminal];
     if (current) {
-        [current stopSession];
-        [self terminalSessionDidEnd:current];
+        [self requestCloseTerminal:current];
     } else {
         [NSApp.keyWindow performClose:sender];
     }
@@ -432,7 +665,7 @@ static char tabOrderContext;
 - (void)newWindowForTab:(id)sender { [self newTab:sender]; }
 
 - (void)saveNormalFrame:(NSWindow *)window {
-    if (![_windows containsObject:window] || window.miniaturized ||
+    if (![_windows containsObject:window] || window.miniaturized || ((MTTerminalWindow *)window).folded ||
         (window.styleMask & NSWindowStyleMaskFullScreen) ||
         [_fullScreenTransitions containsObject:window]) return;
     [window saveFrameUsingName:terminalFrameName];
@@ -449,6 +682,7 @@ static char tabOrderContext;
 - (void)windowDidResize:(NSNotification *)note { [self windowGeometryChanged:note]; }
 
 - (void)windowWillEnterFullScreen:(NSNotification *)note {
+    [note.object restoreFoldedWindow];
     [self saveNormalFrame:note.object];
     [_fullScreenTransitions addObject:note.object];
 }
