@@ -12,6 +12,7 @@
 		D403C4387C927FA8ABE14D39 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC449E4A03BC8DA72F19FC04 /* Cocoa.framework */; };
 		BD0000000000000000000001 /* ColorProfiles.m in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000001 /* ColorProfiles.m */; };
 		BD0000000000000000000002 /* ColorSettings.m in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000002 /* ColorSettings.m */; };
+		A303FF04FE00000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A303FF04FE00000000000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 		AD0000000000000000000000 /* ColorProfiles.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ColorProfiles.h; sourceTree = "<group>"; };
 		AD0000000000000000000001 /* ColorProfiles.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorProfiles.m; sourceTree = "<group>"; };
 		AD0000000000000000000002 /* ColorSettings.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ColorSettings.m; sourceTree = "<group>"; };
+		A303FF04FE00000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +66,7 @@
 		B3FC8A068909E58660F84120 /* mTerm */ = {
 			isa = PBXGroup;
 			children = (
+				A303FF04FE00000000000001 /* Assets.xcassets */,
 				AE8A1ED2C9264C85B1B19543 /* main.m */,
 				E831B1AC36E0FA47B8C4F8DA /* TerminalView.m */,
 				1378DDE047E067721197A767 /* TerminalView.h */,
@@ -158,6 +161,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A303FF04FE00000000000002 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
