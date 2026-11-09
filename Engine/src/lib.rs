@@ -2,10 +2,40 @@
 use std::ffi::{c_char, CString};
 use vt100::Color;
 
+// Le parseur vte conserve les octets OSC jusqu’au terminateur, même si le
+// titre affiché est tronqué. Borner le flux avant son entrée dans vte.
+const MAX_OSC_BYTES: u16 = 2048;
+
+#[derive(Clone, Copy, Default)]
+enum OscState {
+    #[default]
+    Text,
+    Escape,
+    Payload(u16),
+}
+
+impl OscState {
+    fn forward(&mut self, byte: u8) -> bool {
+        match (*self, byte) {
+            (_, 0x1b) => *self = Self::Escape,
+            (_, 0x18 | 0x1a) | (Self::Payload(_), 0x07) => *self = Self::Text,
+            (Self::Escape, b']') => *self = Self::Payload(0),
+            (Self::Escape, 0x20..=0x7e) => *self = Self::Text,
+            (Self::Payload(MAX_OSC_BYTES), _) => return false,
+            (Self::Payload(n), 0x20..=0xff) => *self = Self::Payload(n + 1),
+            _ => {}
+        }
+        true
+    }
+}
+
 #[derive(Default)]
 struct SessionInfo {
     title: Option<CString>,
     replies: String,
+    osc: OscState,
+    #[cfg(test)]
+    received_title_bytes: usize,
 }
 impl vt100::Callbacks for SessionInfo {
     fn unhandled_csi(
@@ -61,6 +91,10 @@ impl vt100::Callbacks for SessionInfo {
     }
 
     fn set_window_title(&mut self, _: &mut vt100::Screen, bytes: &[u8]) {
+        #[cfg(test)]
+        {
+            self.received_title_bytes = bytes.len();
+        }
         let text: String = String::from_utf8_lossy(bytes)
             .chars()
             .filter(|c| !c.is_control())
@@ -109,7 +143,25 @@ unsafe extern "C" fn mt_free(p: *mut Parser) {
 
 #[no_mangle]
 unsafe extern "C" fn mt_feed(p: &mut Parser, bytes: *const u8, len: usize) {
-    p.process(std::slice::from_raw_parts(bytes, len));
+    let bytes = std::slice::from_raw_parts(bytes, len);
+    let mut state = p.callbacks().osc;
+    if matches!(state, OscState::Text) && !bytes.contains(&0x1b) {
+        p.process(bytes);
+        return;
+    }
+    let mut start = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        if !state.forward(byte) {
+            if start < i {
+                p.process(&bytes[start..i]);
+            }
+            start = i + 1;
+        }
+    }
+    if start < len {
+        p.process(&bytes[start..]);
+    }
+    p.callbacks_mut().osc = state;
 }
 
 #[no_mangle]
@@ -554,6 +606,32 @@ mod tests {
         );
         p.process(b"\x1b]2;\x1b\\");
         assert!(p.callbacks().title.as_ref().unwrap().as_bytes().is_empty());
+    }
+
+    #[test]
+    fn oversized_osc_is_bounded_across_reads_and_resumes_at_terminator() {
+        let mut p = parser(2, 20, 0);
+        for terminator in [b"\x07".as_slice(), b"\x1b\\", b"\x18", b"\x1a"] {
+            let mut feed = |bytes: &[u8]| unsafe { mt_feed(&mut p, bytes.as_ptr(), bytes.len()) };
+            feed(b"\x1b");
+            feed(b"\x00]2;");
+            let title = "🦀".repeat(256);
+            feed(title.as_bytes());
+            for _ in 0..128 {
+                feed(&[b'x'; 16384]);
+            }
+            for byte in terminator {
+                feed(std::slice::from_ref(byte));
+            }
+            feed(b"\rOK\x1b[5n");
+            assert_eq!(
+                p.callbacks().title.as_ref().unwrap().to_str().unwrap(),
+                title
+            );
+            assert!(p.callbacks().received_title_bytes <= usize::from(MAX_OSC_BYTES));
+            assert_eq!(p.screen().contents(), "OK");
+            assert_eq!(std::mem::take(&mut p.callbacks_mut().replies), "\x1b[0n");
+        }
     }
 
     #[test]

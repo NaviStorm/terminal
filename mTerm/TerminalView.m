@@ -8,6 +8,8 @@
 #import <sys/wait.h>
 #import <sys/ioctl.h>
 
+static const NSUInteger inputHighWaterMark = 1024 * 1024;
+static const NSUInteger inputChunkSize = 16 * 1024;
 static const CGFloat inset = 8;
 static const CGFloat paneHeaderHeight = 23;
 
@@ -72,8 +74,9 @@ static const NSInteger maximumFontSize = 72;
     CGFloat _cw, _ch;
     int _fd;
     dispatch_source_t _reader, _writer;
-    BOOL _writing;
-    NSMutableData *_pending;
+    BOOL _writing, _readerPaused;
+    NSMutableArray<NSMutableData *> *_pending;
+    NSUInteger _pendingBytes;
     NSUInteger _sent;
     NSInteger _anchor, _focus;
     NSInteger _lastMouseCell;
@@ -292,31 +295,44 @@ static const NSInteger maximumFontSize = 72;
     NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
     env[@"TERM"] = @"xterm-256color";
     if (!env[@"LANG"]) env[@"LANG"] = @"en_US.UTF-8";
-    NSString *shell = env[@"SHELL"] ?: @"/bin/zsh";
+    NSString * __attribute__((objc_precise_lifetime)) shell = env[@"SHELL"] ?: @"/bin/zsh";
     if (![NSFileManager.defaultManager isExecutableFileAtPath:shell]) shell = @"/bin/zsh";
     _shellName = shell.lastPathComponent;
     env[@"SHELL"] = shell;
     env[@"PWD"] = _directory;
-    char **envp = calloc(env.count + 1, sizeof(char *));
-    NSUInteger i = 0;
-    for (NSString *key in env) envp[i++] = strdup([NSString stringWithFormat:@"%@=%@", key, env[key]].UTF8String);
-    char *path = strdup(shell.fileSystemRepresentation);
-    char *directory = strdup(_directory.fileSystemRepresentation);
-    char *home = strdup(NSHomeDirectory().fileSystemRepresentation);
-    char *login = strdup([[@"-" stringByAppendingString:shell.lastPathComponent] UTF8String]);
+    char **envp = calloc(env.count + 1, sizeof(*envp));
+    if (!envp) {
+        _status = @"Mémoire insuffisante pour lancer le shell.";
+        return;
+    }
+    NSUInteger copied = 0;
+    for (NSString *key in env) {
+        const char *entry = [NSString stringWithFormat:@"%@=%@", key, env[key]].UTF8String;
+        if (!entry || !(envp[copied] = strdup(entry))) break;
+        copied++;
+    }
+
+    // Ces pointeurs sont empruntés avant forkpty. Les chaînes restent en vie
+    // jusqu’au retour du fork et le fils appelle uniquement des fonctions POSIX.
+    NSString * __attribute__((objc_precise_lifetime)) homePath = NSHomeDirectory();
+    NSString * __attribute__((objc_precise_lifetime)) loginName = [@"-" stringByAppendingString:_shellName];
+    const char *path = shell.fileSystemRepresentation;
+    const char *directory = _directory.fileSystemRepresentation;
+    const char *home = homePath.fileSystemRepresentation;
+    char *args[] = { (char *)loginName.UTF8String, NULL };
     struct winsize size = { .ws_row = _rows, .ws_col = _cols };
-    int fd;
-    pid_t pid = forkpty(&fd, NULL, NULL, &size);
+    int fd = -1;
+    BOOL ready = copied == env.count && path && directory && home && args[0];
+    pid_t pid = ready ? forkpty(&fd, NULL, NULL, &size) : -1;
     if (pid == 0) {
         if (chdir(directory) < 0 && chdir(home) < 0) _exit(126);
-        char *args[] = { login, NULL };
         execve(path, args, envp);
         _exit(127);
     }
-    for (i = 0; envp[i]; i++) free(envp[i]);
-    free(envp); free(path); free(directory); free(home); free(login);
+    for (NSUInteger i = 0; i < copied; i++) free(envp[i]);
+    free(envp);
     if (pid < 0) {
-        _status = @"Impossible d’ouvrir le pseudo-terminal.";
+        _status = ready ? @"Impossible d’ouvrir le pseudo-terminal." : @"Impossible de préparer l’environnement du shell.";
         return;
     }
     _shellPID = pid;
@@ -346,14 +362,21 @@ static const NSInteger maximumFontSize = 72;
 }
 
 - (void)readOutput {
+    if (_readerPaused || _fd < 0) return;
     uint8_t bytes[16384];
     ssize_t count = read(_fd, bytes, sizeof(bytes));
     if (count > 0) {
         mt_feed(_parser, bytes, count);
         char *replies = mt_take_replies(_parser);
         if (replies) {
-            [self enqueueInput:[NSData dataWithBytes:replies length:strlen(replies)]];
+            [self enqueueBytes:replies length:strlen(replies)];
             mt_string_free(replies);
+            // Admettre toutes les réponses de cette lecture, puis attendre que
+            // le PTY les absorbe avant de traiter un autre bloc de sortie.
+            if (_pendingBytes > inputHighWaterMark) {
+                dispatch_suspend(_reader);
+                _readerPaused = YES;
+            }
         }
         [self refreshTitleAfterOutput];
         self.needsDisplay = YES;
@@ -371,11 +394,14 @@ static const NSInteger maximumFontSize = 72;
 
 - (void)stopSession {
     if (!_reader) return;
+    if (_readerPaused) dispatch_resume(_reader);
+    _readerPaused = NO;
     dispatch_source_cancel(_reader);
     if (!_writing) dispatch_resume(_writer);
     dispatch_source_cancel(_writer);
     _reader = _writer = nil;
     _pending = nil;
+    _pendingBytes = _sent = 0;
     _fd = -1;
     _shellPID = 0;
 }
@@ -386,35 +412,72 @@ static const NSInteger maximumFontSize = 72;
 }
 
 - (void)flushInput {
-    const uint8_t *bytes = _pending.bytes;
-    ssize_t count = write(_fd, bytes + _sent, _pending.length - _sent);
+    NSData *head = _pending.firstObject;
+    if (!head) return;
+    const uint8_t *bytes = head.bytes;
+    ssize_t count = write(_fd, bytes + _sent, head.length - _sent);
     if (count < 0) {
-        if (errno != EINTR && errno != EAGAIN) {
-            [self finishSession];
-        }
+        if (errno != EINTR && errno != EAGAIN) [self finishSession];
         return;
     }
     _sent += count;
-    if (_sent == _pending.length) {
+    _pendingBytes -= count;
+    if (_sent == head.length) {
+        [_pending removeObjectAtIndex:0];
         _sent = 0;
+    }
+    if (_readerPaused && _pendingBytes <= inputHighWaterMark / 2) {
+        _readerPaused = NO;
+        dispatch_resume(_reader);
+    }
+    if (!_pendingBytes) {
         _pending = nil;
         dispatch_suspend(_writer);
         _writing = NO;
     }
 }
 
-- (void)sendText:(NSString *)text {
-    if (!text.length || _fd < 0) return;
+- (BOOL)sendText:(NSString *)text asPaste:(BOOL)paste {
+    if (!text.length || _fd < 0) return YES;
+    BOOL bracketed = paste && mt_bracketed_paste(_parser);
+    static const char beginPaste[] = "\033[200~", endPaste[] = "\033[201~";
+    NSUInteger framing = bracketed ? sizeof(beginPaste) + sizeof(endPaste) - 2 : 0;
+    if (_pendingBytes >= inputHighWaterMark) return NO;
+    NSUInteger room = inputHighWaterMark - _pendingBytes;
+    // Vérifier le texte et les deux marqueurs avant toute copie ou écriture.
+    if (room < framing || text.length > room - framing ||
+        [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > room - framing) return NO;
+    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return NO;
     mt_scroll(_parser, INT32_MIN);
     _anchor = _focus = -1;
     self.needsDisplay = YES;
-    [self enqueueInput:[text dataUsingEncoding:NSUTF8StringEncoding]];
+    if (bracketed) [self enqueueBytes:beginPaste length:sizeof(beginPaste)-1];
+    [self enqueueBytes:data.bytes length:data.length];
+    if (bracketed) [self enqueueBytes:endPaste length:sizeof(endPaste)-1];
+    return YES;
 }
 
-- (void)enqueueInput:(NSData *)data {
-    if (!data.length || _fd < 0) return;
-    if (!_pending) _pending = [NSMutableData data];
-    [_pending appendData:data];
+- (void)sendText:(NSString *)text {
+    if (![self sendText:text asPaste:NO]) NSBeep();
+}
+
+- (void)enqueueBytes:(const void *)input length:(NSUInteger)count {
+    if (!count || _fd < 0) return;
+    if (!_pending) _pending = [NSMutableArray array];
+    const uint8_t *bytes = input;
+    NSUInteger offset = 0;
+    while (offset < count) {
+        NSMutableData *tail = _pending.lastObject;
+        if (!tail || tail.length == inputChunkSize) {
+            tail = [NSMutableData data];
+            [_pending addObject:tail];
+        }
+        NSUInteger length = MIN(inputChunkSize - tail.length, count - offset);
+        [tail appendBytes:bytes + offset length:length];
+        offset += length;
+    }
+    _pendingBytes += count;
     if (!_writing) {
         _writing = YES;
         dispatch_resume(_writer);
@@ -597,9 +660,9 @@ static const NSInteger maximumFontSize = 72;
                         (event.modifierFlags & NSEventModifierFlagControl ? 16 : 0);
     uint8_t bytes[32];
     size_t len = mt_mouse_report(_parser, button, release, motion, modifiers, cell/_cols, cell%_cols, bytes);
-    if (len) {
+    if (len && _pendingBytes <= inputHighWaterMark - len) {
         _lastMouseCell = cell;
-        [self enqueueInput:[NSData dataWithBytes:bytes length:len]];
+        [self enqueueBytes:bytes length:len];
     }
 }
 
@@ -765,9 +828,12 @@ static const NSInteger maximumFontSize = 72;
 }
 
 - (void)insertPastedText:(NSString *)s {
-    if (!s.length) return;
-    if (mt_bracketed_paste(_parser)) s = [NSString stringWithFormat:@"\033[200~%@\033[201~",s];
-    [self sendText:s];
+    if ([self sendText:s asPaste:YES]) return;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Collage trop volumineux pour la file du terminal";
+    alert.informativeText = @"Le collage n’a pas été envoyé. Attendez que le terminal lise les données en attente ou collez le texte par portions de moins de 1 Mio.";
+    if (self.window && !self.window.attachedSheet) [alert beginSheetModalForWindow:self.window completionHandler:nil];
+    else NSBeep();
 }
 
 - (void)paste:(id)sender {
