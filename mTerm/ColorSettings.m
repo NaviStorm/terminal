@@ -4,6 +4,12 @@
 
 NSString *const MTFoldOnTitlebarDoubleClick = @"FoldOnTitlebarDoubleClick";
 
+static NSString *const historyKey = @"ScrollbackLines";
+NSInteger MTScrollbackLines(void) {
+    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:historyKey];
+    return saved ? MAX(0, MIN(10000, saved.integerValue)) : 1000;
+}
+
 @interface MTSettingsCanvas : NSView
 @end
 @implementation MTSettingsCanvas
@@ -86,10 +92,26 @@ void MTShowColorSettings(void) {
         [fold sizeToFit];
         [fold setFrameOrigin:NSMakePoint(24,20)];
         [_generalPage addSubview:fold];
+        NSTextField *label = [NSTextField labelWithString:@"Historique des nouvelles sessions"];
+        [label setFrameOrigin:NSMakePoint(24,66)];
+        [_generalPage addSubview:label];
+        NSPopUpButton *history = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(275,58,170,30) pullsDown:NO];
+        for (NSNumber *lines in @[@0, @250, @1000, @5000, @10000]) {
+            [history addItemWithTitle:[NSString stringWithFormat:@"%@ lignes", lines]];
+            history.lastItem.tag = lines.integerValue;
+        }
+        [history selectItemWithTag:MTScrollbackLines()];
+        history.target = self;
+        history.action = @selector(changeHistory:);
+        [_generalPage addSubview:history];
         [window.contentView addSubview:_generalPage];
         [window center];
     }
     return self;
+}
+
+- (void)changeHistory:(NSPopUpButton *)sender {
+    [NSUserDefaults.standardUserDefaults setInteger:sender.selectedTag forKey:historyKey];
 }
 
 - (void)changeFoldPreference:(NSButton *)sender {

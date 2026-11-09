@@ -20,7 +20,7 @@ static char tabOrderContext;
 @implementation MTSessionHost
 - (void)layout {
     [super layout];
-    self.subviews.firstObject.frame = self.bounds;
+    for (NSView *child in self.subviews) child.frame = self.bounds;
 }
 - (void)didAddSubview:(NSView *)subview {
     [super didAddSubview:subview];
@@ -32,17 +32,44 @@ static char tabOrderContext;
 @interface MTTerminalWindow : NSWindow
 @property(nonatomic,readonly) NSView *sessionHost;
 @property(nonatomic,readonly) BOOL folded;
+@property(nonatomic,readonly) TerminalView *zoomedPane;
+- (void)zoomPane:(TerminalView *)pane;
+- (void)restorePaneLayout;
 - (void)restoreFoldedWindow;
 - (void)prepareSessionHost;
 - (void)observeTabOrder;
 @end
 
 @implementation MTTerminalWindow {
+    NSView *_panePlaceholder;
     NSLayoutConstraint *_hostBottom, *_fixedHostHeight;
     CGFloat _expandedHeight;
     NSSize _expandedMinimum, _expandedMaximum;
     __weak NSView *_foldedResponder;
     BOOL _consumeMouseUp;
+}
+
+- (void)zoomPane:(TerminalView *)pane {
+    if (![pane.superview isKindOfClass:NSSplitView.class] || _zoomedPane) return;
+    _zoomedPane = pane;
+    _panePlaceholder = [[NSView alloc] initWithFrame:pane.frame];
+    _panePlaceholder.autoresizingMask = pane.autoresizingMask;
+    [pane.superview replaceSubview:pane with:_panePlaceholder];
+    _sessionHost.subviews.firstObject.hidden = YES;
+    [_sessionHost addSubview:pane];
+    [self makeFirstResponder:pane];
+}
+
+- (void)restorePaneLayout {
+    TerminalView *pane = _zoomedPane;
+    if (!pane) return;
+    [pane removeFromSuperview];
+    _sessionHost.subviews.firstObject.hidden = NO;
+    pane.frame = _panePlaceholder.frame;
+    [_panePlaceholder.superview replaceSubview:_panePlaceholder with:pane];
+    _panePlaceholder = nil;
+    _zoomedPane = nil;
+    [self makeFirstResponder:pane];
 }
 
 - (void)foldWindow {
@@ -278,6 +305,7 @@ static char tabOrderContext;
     NSMenuItem *horizontal = [session addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
     horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     horizontal.target = self;
+    [self addZoomItemToMenu:session];
     NSMenu *navigation = [[NSMenu alloc] initWithTitle:@"Activer un volet"];
     [session addItemWithTitle:navigation.title action:nil keyEquivalent:@""].submenu = navigation;
     NSArray *directions = @[@"À gauche", @"À droite", @"Au-dessus", @"En dessous"];
@@ -391,6 +419,19 @@ static BOOL HasTransparentPane(NSView *view) {
     [tab makeKeyAndOrderFront:nil];
 }
 
+- (void)addZoomItemToMenu:(NSMenu *)menu {
+    NSMenuItem *zoom = [menu addItemWithTitle:@"Agrandir le volet actif" action:@selector(togglePaneZoom:) keyEquivalent:@"\r"];
+    zoom.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    zoom.target = self;
+}
+
+- (void)togglePaneZoom:(id)sender {
+    TerminalView *current = [self activeTerminal];
+    MTTerminalWindow *window = (MTTerminalWindow *)current.window;
+    if (window.zoomedPane) [window restorePaneLayout];
+    else [window zoomPane:current];
+}
+
 - (NSMenu *)menuForTerminal:(TerminalView *)terminal {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Session"];
     [menu addItemWithTitle:@"Nouvelle fenêtre" action:@selector(newWindow:) keyEquivalent:@"n"].target = self;
@@ -402,8 +443,10 @@ static BOOL HasTransparentPane(NSView *view) {
     NSMenuItem *horizontal = [menu addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
     horizontal.target = self;
     horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [self addZoomItemToMenu:menu];
     [menu addItemWithTitle:@"Déplacer le volet vers une nouvelle fenêtre" action:@selector(detachPane:) keyEquivalent:@""].target = self;
     [menu addItem:NSMenuItem.separatorItem];
+    [menu addItemWithTitle:@"Ouvrir le dossier local dans le Finder" action:@selector(openDirectoryInFinder:) keyEquivalent:@""].target = terminal;
     [menu addItemWithTitle:@"Copier" action:@selector(copy:) keyEquivalent:@"c"].target = terminal;
     [menu addItemWithTitle:@"Coller" action:@selector(paste:) keyEquivalent:@"v"].target = terminal;
     [menu addItemWithTitle:@"Sélectionner le texte visible" action:@selector(selectVisibleText:) keyEquivalent:@""].target = terminal;
@@ -440,7 +483,13 @@ static BOOL HasTransparentPane(NSView *view) {
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(splitVertically:) || item.action == @selector(splitHorizontally:) ||
         item.action == @selector(selectProfile:) || item.action == @selector(focusNeighbor:)) return [self activeTerminal] != nil;
-    if (item.action == @selector(detachPane:)) return [[self activeTerminal].superview isKindOfClass:NSSplitView.class];
+    if (item.action == @selector(togglePaneZoom:) || item.action == @selector(detachPane:)) {
+        TerminalView *current = [self activeTerminal];
+        BOOL zoomed = ((MTTerminalWindow *)current.window).zoomedPane != nil;
+        if (item.action == @selector(togglePaneZoom:))
+            item.title = zoomed ? @"Rétablir la disposition des volets" : @"Agrandir le volet actif";
+        return zoomed || [current.superview isKindOfClass:NSSplitView.class];
+    }
     if (item.action == @selector(closeSession:)) return NSApp.keyWindow != nil;
     return YES;
 }
@@ -448,6 +497,7 @@ static BOOL HasTransparentPane(NSView *view) {
 - (void)focusNeighbor:(NSMenuItem *)sender {
     TerminalView *current = [self activeTerminal];
     if (!current) return;
+    [(MTTerminalWindow *)current.window restorePaneLayout];
     unichar arrow = [sender.keyEquivalent characterAtIndex:0];
     BOOL horizontal = arrow == NSLeftArrowFunctionKey || arrow == NSRightArrowFunctionKey;
     BOOL forward = arrow == NSRightArrowFunctionKey || arrow == NSUpArrowFunctionKey;
@@ -494,6 +544,7 @@ static BOOL HasTransparentPane(NSView *view) {
     TerminalView *current = [self activeTerminal];
     if (!current) return;
     NSWindow *window = current.window;
+    [(MTTerminalWindow *)window restorePaneLayout];
     NSSplitView *split = [[NSSplitView alloc] initWithFrame:current.frame];
     split.vertical = vertical;
     split.dividerStyle = NSSplitViewDividerStyleThin;
@@ -546,12 +597,14 @@ static BOOL HasTransparentPane(NSView *view) {
 
 - (void)detachPane:(id)sender {
     TerminalView *current = [self activeTerminal];
+    [(MTTerminalWindow *)current.window restorePaneLayout];
     if (![current.superview isKindOfClass:NSSplitView.class]) return;
     [self removePaneFromSplit:current];
     [self openAlongside:nil movingTerminal:current];
 }
 
 - (void)terminalSessionDidEnd:(TerminalView *)terminal {
+    [(MTTerminalWindow *)terminal.window restorePaneLayout];
     if ([terminal.superview isKindOfClass:NSSplitView.class]) {
         [self removePaneFromSplit:terminal];
     } else if (terminal.window && terminal.superview == ((MTTerminalWindow *)terminal.window).sessionHost) {
@@ -559,11 +612,44 @@ static BOOL HasTransparentPane(NSView *view) {
     }
 }
 
+static BOOL ContainsForegroundJob(NSView *view) {
+    if ([view isKindOfClass:TerminalView.class]) return [(TerminalView *)view hasForegroundJob];
+    for (NSView *child in view.subviews) if (ContainsForegroundJob(child)) return YES;
+    return NO;
+}
+
+- (BOOL)confirmInterrupt {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Interrompre la commande en cours ?";
+    alert.informativeText = @"La fermeture peut interrompre les commandes au premier plan.";
+    [alert addButtonWithTitle:@"Annuler"];
+    [alert addButtonWithTitle:@"Fermer"];
+    return alert.runModal == NSAlertSecondButtonReturn;
+}
+
+- (BOOL)windowShouldClose:(NSWindow *)window {
+    return !ContainsForegroundJob(window.contentView) || [self confirmInterrupt];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    for (NSWindow *window in _windows) {
+        if (ContainsForegroundJob(window.contentView))
+            return [self confirmInterrupt] ? NSTerminateNow : NSTerminateCancel;
+    }
+    return NSTerminateNow;
+}
+
+- (void)requestCloseTerminal:(TerminalView *)terminal {
+    if (terminal.hasForegroundJob && ![self confirmInterrupt]) return;
+    if (!terminal.window) return;
+    [terminal stopSession];
+    [self terminalSessionDidEnd:terminal];
+}
+
 - (void)closeSession:(id)sender {
     TerminalView *current = [self activeTerminal];
     if (current) {
-        [current stopSession];
-        [self terminalSessionDidEnd:current];
+        [self requestCloseTerminal:current];
     } else {
         [NSApp.keyWindow performClose:sender];
     }

@@ -47,8 +47,7 @@ static const CGFloat paneHeaderHeight = 23;
 - (void)mouseDown:(NSEvent *)event { [self.window makeFirstResponder:self.superview]; }
 - (void)closePane:(id)sender {
     TerminalView *pane = (TerminalView *)self.superview;
-    [pane stopSession];
-    [(id<MTTerminalWindowDelegate>)self.window.delegate terminalSessionDidEnd:pane];
+    [(id<MTTerminalWindowDelegate>)self.window.delegate requestCloseTerminal:pane];
 }
 - (void)openPaneMenu:(NSButton *)button {
     [self.window makeFirstResponder:self.superview];
@@ -113,7 +112,7 @@ static const NSInteger maximumFontSize = 72;
         NSInteger size = [NSUserDefaults.standardUserDefaults integerForKey:fontSizeKey];
         if (size < minimumFontSize || size > maximumFontSize) size = 14;
         [self setTerminalFontSize:size savePreference:NO];
-        _parser = mt_new(2, 2);
+        _parser = mt_new(2, 2, (uint16_t)MTScrollbackLines());
         [self resizeGrid];
         [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeString]];
         [self startSession];
@@ -253,6 +252,15 @@ static const NSInteger maximumFontSize = 72;
         }
     }
     return _directory;
+}
+
+- (BOOL)hasForegroundJob {
+    pid_t foreground = _fd >= 0 ? tcgetpgrp(_fd) : -1;
+    return foreground > 0 && foreground != _shellPID;
+}
+
+- (void)openDirectoryInFinder:(id)sender {
+    if (![NSWorkspace.sharedWorkspace selectFile:nil inFileViewerRootedAtPath:self.currentDirectory]) NSBeep();
 }
 
 - (void)updateSessionTitle {

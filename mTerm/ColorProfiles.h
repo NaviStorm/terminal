@@ -40,5 +40,6 @@ extern NSNotificationName const MTBackgroundChanged;
 - (void)save;
 @end
 
+NSInteger MTScrollbackLines(void);
 extern NSString *const MTFoldOnTitlebarDoubleClick;
 void MTShowColorSettings(void);
