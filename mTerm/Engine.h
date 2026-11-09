@@ -12,6 +12,7 @@ typedef struct {
 } MTPaint;
 
 MTParser *mt_new(uint16_t rows, uint16_t cols, uint16_t history);
+void mt_parser_counts(uint64_t *created, uint64_t *freed);
 void mt_free(MTParser *);
 void mt_feed(MTParser *, const uint8_t *, size_t);
 char *mt_take_replies(MTParser *);

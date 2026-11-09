@@ -3,6 +3,10 @@
 #import <libproc.h>
 #import <mach/mach.h>
 
+@protocol MTCompteurs <NSObject>
++ (void)getParserCreations:(uint64_t *)created destructions:(uint64_t *)freed;
+@end
+
 @protocol MTActionsDeTest
 - (void)splitActivePaneVertically:(BOOL)vertical;
 - (void)closeSession:(id)sender;
@@ -35,6 +39,13 @@ static void observeViews(NSView *view) {
 }
 
 static double report(const char *stage, int expected) {
+    Class<MTCompteurs> terminal = NSClassFromString(@"TerminalView");
+    if (![terminal respondsToSelector:@selector(getParserCreations:destructions:)])
+        fail(@"cette version de mTerm ne fournit pas les compteurs. Recompilez la Release.");
+    uint64_t created, freed;
+    [terminal getParserCreations:&created destructions:&freed];
+    if (freed > created || created - freed != (uint64_t)expected)
+        fail([NSString stringWithFormat:@"%s : mt_new=%llu, mt_free=%llu, %d parseur(s) attendu(s)", stage, created, freed, expected]);
     observeViews(window.contentView);
     pid_t children[32];
     int count = proc_listchildpids(getpid(), children, sizeof(children));
@@ -58,7 +69,7 @@ static double report(const char *stage, int expected) {
     }
     double mb = footprint() / 1e6;
     NSString *label = [@(stage) stringByPaddingToLength:28 withString:@" " startingAtIndex:0];
-    printf("%s  %9.1f Mo  %27.1f Mo\n", label.UTF8String, mb, shellBytes / 1e6);
+    printf("%s  %9.1f Mo  %27.1f Mo  %6llu  %7llu  %7llu\n", label.UTF8String, mb, shellBytes / 1e6, created, freed, created - freed);
     fflush(stdout);
     return mb;
 }
@@ -126,9 +137,9 @@ __attribute__((constructor)) static void startTest(void) {
                     id profile = [panes.anyObject valueForKey:@"profile"];
                     if (!profile) fail(@"profil de la session de test introuvable");
                     printf("Profil : %s\n\n", [[profile valueForKey:@"name"] UTF8String]);
-                    printf("%s  %s  %s\n", [@"État" stringByPaddingToLength:28 withString:@" " startingAtIndex:0].UTF8String,
+                    printf("%s  %s  %s  mt_new  mt_free  Vivants\n", [@"État" stringByPaddingToLength:28 withString:@" " startingAtIndex:0].UTF8String,
                            "RAM de mTerm", "RAM des shells zsh, séparément");
-                    puts("----------------------------  ------------  ------------------------------");
+                    puts("----------------------------  ------------  ------------------------------  ------  -------  -------");
                     fflush(stdout);
                     break;
                 }

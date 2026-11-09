@@ -94,6 +94,10 @@ static const NSInteger maximumFontSize = 72;
     NSEvent *_textKeyEvent;
 }
 
++ (void)getParserCreations:(uint64_t *)created destructions:(uint64_t *)freed {
+    mt_parser_counts(created, freed);
+}
+
 - (instancetype)initWithFrame:(NSRect)frame {
     return [self initWithFrame:frame directory:nil];
 }

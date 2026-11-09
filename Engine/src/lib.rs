@@ -1,6 +1,16 @@
 //! Le pointeur du parseur appartient à la vue AppKit, qui l'utilise sur le fil principal.
 use std::ffi::{c_char, CString};
+use std::sync::atomic::{AtomicU64, Ordering};
 use vt100::Color;
+
+static PARSERS_CREATED: AtomicU64 = AtomicU64::new(0);
+static PARSERS_FREED: AtomicU64 = AtomicU64::new(0);
+
+#[no_mangle]
+extern "C" fn mt_parser_counts(created: &mut u64, freed: &mut u64) {
+    *created = PARSERS_CREATED.load(Ordering::Relaxed);
+    *freed = PARSERS_FREED.load(Ordering::Relaxed);
+}
 
 // Le parseur vte conserve les octets OSC jusqu’au terminateur, même si le
 // titre affiché est tronqué. Borner le flux avant son entrée dans vte.
@@ -129,16 +139,19 @@ extern "C" fn mt_take_title(p: &mut Parser) -> *mut c_char {
 
 #[no_mangle]
 extern "C" fn mt_new(rows: u16, cols: u16, history: u16) -> *mut Parser {
-    Box::into_raw(Box::new(parser(
+    let p = Box::into_raw(Box::new(parser(
         rows.max(2),
         cols.max(2),
         usize::from(history),
-    )))
+    )));
+    PARSERS_CREATED.fetch_add(1, Ordering::Relaxed);
+    p
 }
 
 #[no_mangle]
 unsafe extern "C" fn mt_free(p: *mut Parser) {
     drop(Box::from_raw(p));
+    PARSERS_FREED.fetch_add(1, Ordering::Relaxed);
 }
 
 #[no_mangle]
