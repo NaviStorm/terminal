@@ -56,7 +56,7 @@ static const CGFloat paneHeaderHeight = 23;
 }
 - (void)drawRect:(NSRect)dirty {
     [[NSColor.windowBackgroundColor blendedColorWithFraction:0.35 ofColor:NSColor.grayColor] setFill];
-    NSRectFill(dirty);
+    NSRectFill(NSIntersectionRect(dirty, self.bounds));
     [NSColor.separatorColor setFill];
     NSRectFill(NSMakeRect(0,0,NSWidth(self.bounds),1));
 }
@@ -839,6 +839,7 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
 }
 
 - (void)drawRect:(NSRect)dirty {
+    [NSBezierPath clipRect:self.bounds];
     CGFloat gridTop = self.gridTop;
     MTPalette *palette = [_profile paletteForAppearance:self.effectiveAppearance];
     [[palette color:MTBackground] setFill];
