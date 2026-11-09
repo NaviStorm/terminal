@@ -8,6 +8,59 @@
 #import <sys/ioctl.h>
 
 static const CGFloat inset = 8;
+static const CGFloat paneHeaderHeight = 23;
+
+@interface MTPaneHeader : NSView
+@property(nonatomic, readonly) NSTextField *caption;
+@end
+
+@implementation MTPaneHeader
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        _caption = [NSTextField labelWithString:@""];
+        _caption.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        _caption.lineBreakMode = NSLineBreakByTruncatingHead;
+        _caption.frame = NSMakeRect(26,3,MAX(0,NSWidth(frame)-54),17);
+        _caption.autoresizingMask = NSViewWidthSizable;
+        [self addSubview:_caption];
+        NSButton *close = [self button:@"xmark" title:@"Fermer le volet" action:@selector(closePane:)];
+        close.frame = NSMakeRect(2,1,22,21);
+        NSButton *menu = [self button:@"ellipsis.circle" title:@"Menu du volet" action:@selector(openPaneMenu:)];
+        menu.frame = NSMakeRect(NSWidth(frame)-25,1,23,21);
+        menu.autoresizingMask = NSViewMinXMargin;
+    }
+    return self;
+}
+- (NSButton *)button:(NSString *)symbol title:(NSString *)title action:(SEL)action {
+    NSImage *image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:title];
+    NSButton *button = [NSButton buttonWithImage:image target:self action:action];
+    button.bordered = NO;
+    button.toolTip = title;
+    [self addSubview:button];
+    return button;
+}
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *hit = [super hitTest:point];
+    return hit == _caption ? self : hit;
+}
+- (void)mouseDown:(NSEvent *)event { [self.window makeFirstResponder:self.superview]; }
+- (void)closePane:(id)sender {
+    TerminalView *pane = (TerminalView *)self.superview;
+    [pane stopSession];
+    [(id<MTTerminalWindowDelegate>)self.window.delegate terminalSessionDidEnd:pane];
+}
+- (void)openPaneMenu:(NSButton *)button {
+    [self.window makeFirstResponder:self.superview];
+    NSMenu *menu = [(id<MTTerminalWindowDelegate>)self.window.delegate menuForTerminal:(TerminalView *)self.superview];
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(NSMinX(button.frame),0) inView:self];
+}
+- (void)drawRect:(NSRect)dirty {
+    [[NSColor.windowBackgroundColor blendedColorWithFraction:0.35 ofColor:NSColor.grayColor] setFill];
+    NSRectFill(dirty);
+    [NSColor.separatorColor setFill];
+    NSRectFill(NSMakeRect(0,0,NSWidth(self.bounds),1));
+}
+@end
 static NSString *const fontSizeKey = @"TerminalFontSize";
 static const NSInteger minimumFontSize = 6;
 static const NSInteger maximumFontSize = 72;
@@ -28,6 +81,8 @@ static const NSInteger maximumFontSize = 72;
     NSInteger _clickCount;
     int32_t _initialFirst, _initialLast;
     NSTrackingArea *_tracking;
+    MTPaneHeader *_paneHeader;
+    NSString *_shellName;
     NSString *_status, *_directory, *_shellTitle, *_query;
     pid_t _shellPID;
     BOOL _titleUpdatePending;
@@ -126,10 +181,41 @@ static const NSInteger maximumFontSize = 72;
     return [super performKeyEquivalent:event];
 }
 
+- (CGFloat)gridTop { return inset + (_paneHeader ? paneHeaderHeight : 0); }
+
+- (void)viewDidMoveToSuperview {
+    [super viewDidMoveToSuperview];
+    if (!self.superview) return;
+    if ([self.superview isKindOfClass:NSSplitView.class]) {
+        if (_paneHeader) return;
+        _paneHeader = [[MTPaneHeader alloc] initWithFrame:NSMakeRect(0,0,NSWidth(self.bounds),paneHeaderHeight)];
+        _paneHeader.autoresizingMask = NSViewWidthSizable;
+        [self addSubview:_paneHeader];
+        [self updatePaneHeader];
+    } else if (_paneHeader) {
+        [_paneHeader removeFromSuperview];
+        _paneHeader = nil;
+    } else {
+        return;
+    }
+    [self resizeGrid];
+    self.needsDisplay = YES;
+}
+
+- (void)updatePaneHeader {
+    if (!_paneHeader) return;
+    NSString *path = _directory.stringByAbbreviatingWithTildeInPath;
+    NSString *caption = [NSString stringWithFormat:@"%@ (-%@)", path, _shellName];
+    if (![_paneHeader.caption.stringValue isEqual:caption]) {
+        _paneHeader.caption.stringValue = caption;
+        _paneHeader.toolTip = caption;
+    }
+}
+
 - (void)resizeGrid {
     if (!_parser) return;
     uint16_t cols = MIN(4096, MAX(2, floor((self.bounds.size.width - 2*inset) / _cw)));
-    uint16_t rows = MIN(4096, MAX(1, floor((self.bounds.size.height - 2*inset) / _ch)));
+    uint16_t rows = MIN(4096, MAX(1, floor((self.bounds.size.height - self.gridTop - inset) / _ch)));
     if (rows == _rows && cols == _cols) return;
     _rows = rows;
     _cols = cols;
@@ -153,7 +239,10 @@ static const NSInteger maximumFontSize = 72;
         const char *path = info.pvi_cdir.vip_path;
         if (path[0] == '/') {
             NSString *directory = [NSFileManager.defaultManager stringWithFileSystemRepresentation:path length:strlen(path)];
-            if (directory) _directory = directory;
+            if (directory && ![_directory isEqualToString:directory]) {
+                _directory = directory;
+                [self updatePaneHeader];
+            }
         }
     }
     return _directory;
@@ -170,14 +259,16 @@ static const NSInteger maximumFontSize = 72;
         _shellTitle = [NSString stringWithUTF8String:title];
         mt_string_free(title);
         if (self.window.firstResponder == self) [self updateSessionTitle];
-    } else if (!_shellTitle.length && !_titleUpdatePending && self.window.firstResponder == self) {
+    }
+    if (!_titleUpdatePending && (_paneHeader || (!_shellTitle.length && self.window.firstResponder == self))) {
         _titleUpdatePending = YES;
         __weak TerminalView *weakSelf = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 3), dispatch_get_main_queue(), ^{
             TerminalView *view = weakSelf;
             if (!view) return;
             view->_titleUpdatePending = NO;
-            if (view.window.firstResponder == view) [view updateSessionTitle];
+            if (!view->_shellTitle.length && view.window.firstResponder == view) [view updateSessionTitle];
+            else if (view->_paneHeader) [view currentDirectory];
         });
     }
 }
@@ -188,6 +279,7 @@ static const NSInteger maximumFontSize = 72;
     if (!env[@"LANG"]) env[@"LANG"] = @"en_US.UTF-8";
     NSString *shell = env[@"SHELL"] ?: @"/bin/zsh";
     if (![NSFileManager.defaultManager isExecutableFileAtPath:shell]) shell = @"/bin/zsh";
+    _shellName = shell.lastPathComponent;
     env[@"SHELL"] = shell;
     env[@"PWD"] = _directory;
     char **envp = calloc(env.count + 1, sizeof(char *));
@@ -437,7 +529,7 @@ static const NSInteger maximumFontSize = 72;
     mt_cursor(_parser,&row,&col);
     CGFloat width = MAX(_cw, [_markedText sizeWithAttributes:@{NSFontAttributeName:_font}].width);
     CGFloat x = MAX(inset, MIN(inset + col*_cw, NSWidth(self.bounds) - inset - width));
-    return NSMakeRect(x, inset + row*_ch, width, _ch);
+    return NSMakeRect(x, self.gridTop + row*_ch, width, _ch);
 }
 
 - (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actual {
@@ -465,7 +557,7 @@ static const NSInteger maximumFontSize = 72;
 
 - (NSInteger)cellAt:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    NSInteger row = MAX(0, MIN(_rows-1, floor((p.y-inset)/_ch)));
+    NSInteger row = MAX(0, MIN(_rows-1, floor((p.y-self.gridTop)/_ch)));
     NSInteger col = MAX(0, MIN(_cols-1, floor((p.x-inset)/_cw)));
     return row * _cols + col;
 }
@@ -747,6 +839,7 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
 }
 
 - (void)drawRect:(NSRect)dirty {
+    CGFloat gridTop = self.gridTop;
     MTPalette *palette = [_profile paletteForAppearance:self.effectiveAppearance];
     [[palette color:MTBackground] setFill];
     NSRectFill(dirty);
@@ -765,12 +858,12 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
             if (highlight.length) {
                 [[palette color:MTSelection] setFill];
                 NSRectFill(NSMakeRect(inset + (highlight.location - rowStart) * _cw,
-                                      inset + row * _ch, highlight.length * _cw, _ch));
+                                      gridTop + row * _ch, highlight.length * _cw, _ch));
             }
             for (uint16_t col = 0; col < _cols; col++) {
                 MTPaint cell;
                 if (!mt_cell(_parser,row,col,&cell)) continue;
-                CGRect rect = CGRectMake(inset+col*_cw,inset+row*_ch,_cw*(cell.wide ? 2 : 1),_ch);
+                CGRect rect = CGRectMake(inset+col*_cw,gridTop+row*_ch,_cw*(cell.wide ? 2 : 1),_ch);
                 if (!CGRectIntersectsRect(rect,dirty)) continue;
                 BOOL selected = NSLocationInRange(rowStart + col, highlight);
                 if (!selected && cell.bg != MTPaletteReference + MTBackground) {
@@ -790,7 +883,7 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     uint16_t row = 0, col = 0;
     if (!_status && self.window.firstResponder == self && mt_cursor(_parser,&row,&col)) {
         [[palette color:MTCursor] setFill];
-        NSRectFill(NSMakeRect(inset+col*_cw,inset+(1+row)*_ch-2,_cw,2));
+        NSRectFill(NSMakeRect(inset+col*_cw,gridTop+(1+row)*_ch-2,_cw,2));
     }
     if (self.hasMarkedText && self.window.firstResponder == self) {
         NSRect rect = [self compositionRect];

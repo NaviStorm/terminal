@@ -354,7 +354,7 @@ static char tabOrderContext;
     split.dividerStyle = NSSplitViewDividerStyleThin;
     CGFloat length = vertical ? NSWidth(current.bounds) : NSHeight(current.bounds);
     CGFloat half = floor((length - split.dividerThickness) / 2);
-    if (half < (vertical ? 80 : 48)) { NSBeep(); return; }
+    if (half < (vertical ? 80 : 64)) { NSBeep(); return; }
 
     NSRect pane = current.bounds;
     if (vertical) pane.size.width = half;
@@ -376,7 +376,7 @@ static char tabOrderContext;
 
 - (CGFloat)splitView:(NSSplitView *)split constrainSplitPosition:(CGFloat)position ofSubviewAt:(NSInteger)divider {
     CGFloat length = (split.vertical ? NSWidth(split.bounds) : NSHeight(split.bounds)) - split.dividerThickness;
-    CGFloat minimum = MIN(split.vertical ? 80 : 48, length / 2);
+    CGFloat minimum = MIN(split.vertical ? 80 : 64, length / 2);
     return MAX(minimum, MIN(length - minimum, position));
 }
 
