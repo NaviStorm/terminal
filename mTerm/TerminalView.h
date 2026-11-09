@@ -14,6 +14,7 @@
 @end
 
 @protocol MTTerminalWindowDelegate <NSObject>
+- (void)updateBackgroundForWindow:(NSWindow *)window;
 - (void)terminalSessionDidEnd:(TerminalView *)terminal;
 - (NSMenu *)menuForTerminal:(TerminalView *)terminal;
 @end

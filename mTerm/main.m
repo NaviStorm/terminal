@@ -187,6 +187,21 @@ static char tabOrderContext;
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+static BOOL HasTransparentPane(NSView *view) {
+    if ([view isKindOfClass:TerminalView.class]) return ((TerminalView *)view).profile.backgroundOpacity < 100;
+    for (NSView *child in view.subviews) if (HasTransparentPane(child)) return YES;
+    return NO;
+}
+
+- (void)updateBackgroundForWindow:(NSWindow *)window {
+    BOOL opaque = !HasTransparentPane(window.contentView);
+    if (window.opaque != opaque) {
+        window.backgroundColor = opaque ? NSColor.windowBackgroundColor : NSColor.clearColor;
+        window.opaque = opaque;
+        [window invalidateShadow];
+    }
+}
+
 - (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
     MTTerminalWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
@@ -204,6 +219,7 @@ static char tabOrderContext;
     TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.contentView.bounds
                                                                    directory:parent ? [self activeTerminal].currentDirectory : nil];
     window.contentView = view;
+    [self updateBackgroundForWindow:window];
     [_windows addObject:window];
     if (parent) {
         window.tabbingMode = NSWindowTabbingModeAutomatic;
@@ -369,6 +385,7 @@ static char tabOrderContext;
     [split adjustSubviews];
     [split setPosition:half ofDividerAtIndex:0];
     [window makeFirstResponder:next];
+    [self updateBackgroundForWindow:window];
 }
 
 - (void)splitVertically:(id)sender { [self splitActivePaneVertically:YES]; }
@@ -388,6 +405,7 @@ static char tabOrderContext;
     [remaining removeFromSuperview];
     [current removeFromSuperview];
     [self replacePane:split with:remaining inWindow:window];
+    [self updateBackgroundForWindow:window];
     if ([previousFocus isKindOfClass:TerminalView.class] && previousFocus != current) {
         [window makeFirstResponder:previousFocus];
         return;
