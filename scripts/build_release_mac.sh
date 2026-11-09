@@ -6,11 +6,7 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 derived_data="$project_dir/DerivedData"
 destination=/Applications/mTerm.app
 
-xcodebuild -project "$project_dir/mTerm.xcodeproj" -scheme mTerm \
-    -configuration Release -destination 'generic/platform=macOS' \
-    -derivedDataPath "$derived_data" \
-    ENABLE_APP_SANDBOX=NO CODE_SIGN_ENTITLEMENTS= CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
-    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" build
+"$project_dir/scripts/build_developer_id.sh" "$derived_data"
 
 # Préparer la copie sur le volume de destination avant de toucher à la version installée.
 staging=$(mktemp -d /Applications/.mTerm.XXXXXX)

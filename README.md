@@ -26,6 +26,17 @@ Depuis la racine du dépôt, avec un accès en écriture à `/Applications` :
 
 Le script compile en Release dans `DerivedData/` avec une identité **Developer ID Application** de l’équipe configurée. Le certificat et sa clé privée doivent être disponibles dans le trousseau. Le script vérifie la signature avant de remplacer la version installée. Dans Xcode, Debug et Release utilisent la signature automatique. [Script d’installation](scripts/build_release_mac.sh)
 
+## Créer le DMG pour la distribution directe
+
+Enregistrez une fois vos identifiants de notarisation dans le trousseau avec la commande interactive ci-dessous. Si vous utilisez déjà un profil, passez son nom à la place de `mTerm` lors du lancement du script.
+
+```sh
+xcrun notarytool store-credentials "mTerm"
+./scripts/build_dmg.sh "mTerm"
+```
+
+Le script compile la Release Developer ID, attend l’acceptation d’Apple et agrafe le ticket à l’application avant de créer le DMG. Il signe et notarise ensuite le DMG lui-même. L’image finale se trouve dans `DerivedData/Distribution/` et contient `mTerm.app` ainsi qu’un raccourci vers Applications.
+
 ## Architecture
 
 | Composant | Responsabilité |
