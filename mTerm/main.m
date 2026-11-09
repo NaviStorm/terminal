@@ -49,6 +49,8 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [bar addItemWithTitle:@"mTerm" action:nil keyEquivalent:@""].submenu = app;
     [app addItemWithTitle:@"Réglages…" action:@selector(showSettings:) keyEquivalent:@","].target = self;
     [app addItem:NSMenuItem.separatorItem];
+    [app addItemWithTitle:@"Masquer mTerm" action:@selector(hide:) keyEquivalent:@"h"].target = NSApp;
+    [app addItem:NSMenuItem.separatorItem];
     [app addItemWithTitle:@"Quitter mTerm" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenu *session = [[NSMenu alloc] initWithTitle:@"Session"];
     [bar addItemWithTitle:@"Session" action:nil keyEquivalent:@""].submenu = session;
