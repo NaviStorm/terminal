@@ -9,7 +9,8 @@ destination=/Applications/mTerm.app
 xcodebuild -project "$project_dir/mTerm.xcodeproj" -scheme mTerm \
     -configuration Release -destination 'generic/platform=macOS' \
     -derivedDataPath "$derived_data" \
-    CODE_SIGN_ENTITLEMENTS= CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" build
+    ENABLE_APP_SANDBOX=NO CODE_SIGN_ENTITLEMENTS= CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" build
 
 # Préparer la copie sur le volume de destination avant de toucher à la version installée.
 staging=$(mktemp -d /Applications/.mTerm.XXXXXX)
