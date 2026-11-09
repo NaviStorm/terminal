@@ -58,6 +58,8 @@ static char tabOrderContext;
 @implementation AppDelegate {
     NSMutableSet<NSWindow *> *_windows;
     NSHashTable<NSWindow *> *_fullScreenTransitions;
+    NSImage *_appIcon;
+    NSPanel *_aboutPanel;
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)note {
@@ -65,23 +67,69 @@ static char tabOrderContext;
     NSString *iconFile = [bundle objectForInfoDictionaryKey:@"CFBundleIconFile"];
     if (!iconFile.length) return;
     NSURL *url = [bundle URLForResource:iconFile.stringByDeletingPathExtension withExtension:@"icns"];
-    NSImage *image = url ? [[NSImage alloc] initWithContentsOfURL:url] : nil;
-    if (!image) return;
+    _appIcon = url ? [[NSImage alloc] initWithContentsOfURL:url] : nil;
+    if (!_appIcon) return;
 
     // Dessiner la ressource transparente directement dans la tuile du Dock.
     NSDockTile *tile = NSApp.dockTile;
     NSImageView *view = [[NSImageView alloc] initWithFrame:(NSRect){NSZeroPoint, tile.size}];
     view.imageScaling = NSImageScaleProportionallyUpOrDown;
-    view.image = image;
+    view.image = _appIcon;
     tile.contentView = view;
     [tile display];
+}
+
+- (void)showAbout:(id)sender {
+    if (!_aboutPanel) {
+        _aboutPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,440,185)
+            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskFullSizeContentView
+            backing:NSBackingStoreBuffered defer:YES];
+        _aboutPanel.title = @"À propos de mTerm";
+        _aboutPanel.titleVisibility = NSWindowTitleHidden;
+        _aboutPanel.titlebarAppearsTransparent = YES;
+        _aboutPanel.releasedWhenClosed = NO;
+        _aboutPanel.tabbingMode = NSWindowTabbingModeDisallowed;
+
+        NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(22,20,144,144)];
+        icon.image = _appIcon;
+        icon.imageScaling = NSImageScaleProportionallyUpOrDown;
+        [_aboutPanel.contentView addSubview:icon];
+
+        NSBundle *bundle = NSBundle.mainBundle;
+        NSTextField *name = [NSTextField labelWithString:[bundle objectForInfoDictionaryKey:@"CFBundleName"]];
+        name.font = [NSFont systemFontOfSize:36 weight:NSFontWeightRegular];
+        [name sizeToFit];
+        [name setFrameOrigin:NSMakePoint(185,94)];
+        [_aboutPanel.contentView addSubview:name];
+
+        NSString *version = [NSString stringWithFormat:@"Version %@ (%@)",
+            [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"],
+            [bundle objectForInfoDictionaryKey:@"CFBundleVersion"]];
+        NSTextField *details = [NSTextField labelWithString:version];
+        details.font = [NSFont systemFontOfSize:15];
+        details.textColor = NSColor.secondaryLabelColor;
+        details.selectable = YES;
+        [details sizeToFit];
+        [details setFrameOrigin:NSMakePoint(185,68)];
+        [_aboutPanel.contentView addSubview:details];
+
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(aboutPanelWillClose:)
+            name:NSWindowWillCloseNotification object:_aboutPanel];
+        [_aboutPanel center];
+    }
+    [_aboutPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)aboutPanelWillClose:(NSNotification *)note {
+    [NSNotificationCenter.defaultCenter removeObserver:self name:NSWindowWillCloseNotification object:note.object];
+    _aboutPanel = nil;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     NSMenu *bar = [NSMenu new];
     NSMenu *app = [NSMenu new];
     [bar addItemWithTitle:@"mTerm" action:nil keyEquivalent:@""].submenu = app;
-    [app addItemWithTitle:@"À propos de mTerm" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""].target = NSApp;
+    [app addItemWithTitle:@"À propos de mTerm" action:@selector(showAbout:) keyEquivalent:@""].target = self;
     [app addItem:NSMenuItem.separatorItem];
     [app addItemWithTitle:@"Réglages…" action:@selector(showSettings:) keyEquivalent:@","].target = self;
     [app addItem:NSMenuItem.separatorItem];
