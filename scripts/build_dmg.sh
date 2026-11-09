@@ -51,7 +51,12 @@ version=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.pli
 build=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist")
 name="mTerm-$version-$build.dmg"
 ln -s /Applications "$work/volume/Applications"
-hdiutil create -volname mTerm -srcfolder "$work/volume" -fs HFS+ -format UDZO "$work/$name"
+if diskutil image create from --help >/dev/null 2>&1; then
+    diskutil image create from --volumeName mTerm --format UDZO "$work/volume" "$work/$name"
+else
+    # Compatibilité avec les versions de macOS antérieures à cette commande.
+    hdiutil create -volname mTerm -srcfolder "$work/volume" -fs HFS+ -format UDZO "$work/$name"
+fi
 codesign --sign "$identity" --timestamp "$work/$name"
 notarize "$work/$name"
 xcrun stapler staple "$work/$name"
