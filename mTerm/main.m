@@ -113,6 +113,13 @@ static char tabOrderContext;
         [details setFrameOrigin:NSMakePoint(185,68)];
         [_aboutPanel.contentView addSubview:details];
 
+        NSTextField *copyright = [NSTextField labelWithString:[bundle objectForInfoDictionaryKey:@"NSHumanReadableCopyright"]];
+        copyright.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        copyright.textColor = NSColor.secondaryLabelColor;
+        [copyright sizeToFit];
+        [copyright setFrameOrigin:NSMakePoint(185,37)];
+        [_aboutPanel.contentView addSubview:copyright];
+
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(aboutPanelWillClose:)
             name:NSWindowWillCloseNotification object:_aboutPanel];
         [_aboutPanel center];
