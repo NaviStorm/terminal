@@ -25,10 +25,10 @@ static char tabOrderContext;
     NSFontWeight weight = active ? NSFontWeightBold : NSFontWeightMedium;
     NSArray *windows = self.tabGroup.windows;
     NSUInteger index = [windows indexOfObjectIdenticalTo:self];
-    NSString *number = [NSString stringWithFormat:@"#%lu", (unsigned long)(index == NSNotFound ? 1 : index + 1)];
-    self.tab.title = number;
+    NSString *tabTitle = [NSString stringWithFormat:@"%@ #%lu", self.title, (unsigned long)(index == NSNotFound ? 1 : index + 1)];
+    self.tab.title = tabTitle;
     NSMutableAttributedString *label = [[NSMutableAttributedString alloc]
-        initWithString:[marker stringByAppendingString:number]
+        initWithString:[marker stringByAppendingString:tabTitle]
         attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:NSFont.systemFontSize weight:weight],
                      NSForegroundColorAttributeName:NSColor.labelColor}];
     if (active) [label addAttribute:NSForegroundColorAttributeName value:NSColor.controlAccentColor range:NSMakeRange(0,1)];
@@ -48,6 +48,7 @@ static char tabOrderContext;
 - (void)setTitle:(NSString *)title {
     [super setTitle:title];
     self.tab.toolTip = title;
+    [self styleTabAsActive:self.mainWindow];
 }
 @end
 
