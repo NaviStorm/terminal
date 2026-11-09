@@ -8,28 +8,30 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 @end
 
 @implementation MTTerminalWindow
-- (void)highlightActiveTab {
+- (void)styleTabAsActive:(BOOL)active {
+    NSString *marker = active ? @"●  " : @"○  ";
+    NSFontWeight weight = active ? NSFontWeightBold : NSFontWeightMedium;
     NSMutableAttributedString *label = [[NSMutableAttributedString alloc]
-        initWithString:[@"●  " stringByAppendingString:self.title]
-        attributes:@{NSFontAttributeName:[NSFont boldSystemFontOfSize:NSFont.systemFontSize],
+        initWithString:[marker stringByAppendingString:self.title]
+        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:NSFont.systemFontSize weight:weight],
                      NSForegroundColorAttributeName:NSColor.labelColor}];
-    [label addAttribute:NSForegroundColorAttributeName value:NSColor.controlAccentColor range:NSMakeRange(0,1)];
+    if (active) [label addAttribute:NSForegroundColorAttributeName value:NSColor.controlAccentColor range:NSMakeRange(0,1)];
     self.tab.attributedTitle = label;
 }
 
 - (void)becomeMainWindow {
     [super becomeMainWindow];
-    [self highlightActiveTab];
+    [self styleTabAsActive:YES];
 }
 
 - (void)resignMainWindow {
     [super resignMainWindow];
-    self.tab.attributedTitle = nil;
+    [self styleTabAsActive:NO];
 }
 
 - (void)setTitle:(NSString *)title {
     [super setTitle:title];
-    if (self.mainWindow) [self highlightActiveTab];
+    [self styleTabAsActive:self.mainWindow];
 }
 @end
 
