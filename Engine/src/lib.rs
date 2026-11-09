@@ -95,7 +95,7 @@ extern "C" fn mt_take_title(p: &mut Parser) -> *mut c_char {
 
 #[no_mangle]
 extern "C" fn mt_new(rows: u16, cols: u16) -> *mut Parser {
-    Box::into_raw(Box::new(parser(rows.max(1), cols.max(1), 1000)))
+    Box::into_raw(Box::new(parser(rows.max(2), cols.max(2), 1000)))
 }
 
 #[no_mangle]
@@ -110,7 +110,7 @@ unsafe extern "C" fn mt_feed(p: &mut Parser, bytes: *const u8, len: usize) {
 
 #[no_mangle]
 extern "C" fn mt_resize(p: &mut Parser, rows: u16, cols: u16) {
-    p.screen_mut().set_size(rows.max(1), cols.max(1));
+    p.screen_mut().set_size(rows.max(2), cols.max(2));
 }
 
 #[no_mangle]
@@ -457,6 +457,16 @@ unsafe extern "C" fn mt_find(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tiny_pane_wraps_shell_output_after_resize() {
+        let mut p = unsafe { Box::from_raw(mt_new(1, 1)) };
+        for (rows, cols) in [(1, 1), (24, 80), (1, 4)] {
+            mt_resize(&mut p, rows, cols);
+            p.process("abcdefghijkl界".as_bytes());
+            assert_eq!(p.screen().size(), (rows.max(2), cols.max(2)));
+        }
+    }
+
     #[test]
     fn content_extent_tracks_wide_glyphs_backgrounds_and_scrollback() {
         let mut p = parser(2, 8, 100);

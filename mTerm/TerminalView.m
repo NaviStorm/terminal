@@ -113,7 +113,7 @@ static const NSInteger maximumFontSize = 72;
         NSInteger size = [NSUserDefaults.standardUserDefaults integerForKey:fontSizeKey];
         if (size < minimumFontSize || size > maximumFontSize) size = 14;
         [self setTerminalFontSize:size savePreference:NO];
-        _parser = mt_new(1, 1);
+        _parser = mt_new(2, 2);
         [self resizeGrid];
         [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeString]];
         [self startSession];
@@ -221,7 +221,7 @@ static const NSInteger maximumFontSize = 72;
 - (void)resizeGrid {
     if (!_parser) return;
     uint16_t cols = MIN(4096, MAX(2, floor((self.bounds.size.width - 2*inset) / _cw)));
-    uint16_t rows = MIN(4096, MAX(1, floor((self.bounds.size.height - self.gridTop - inset) / _ch)));
+    uint16_t rows = MIN(4096, MAX(2, floor((self.bounds.size.height - self.gridTop - inset) / _ch)));
     if (rows == _rows && cols == _cols) return;
     _rows = rows;
     _cols = cols;
