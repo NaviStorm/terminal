@@ -228,6 +228,25 @@ struct Paint {
     wide: bool,
 }
 
+// Étendue des cellules qui contribuent à l’image, sur la page affichée.
+#[no_mangle]
+extern "C" fn mt_content_size(p: &Parser, rows: &mut u16, cols: &mut u16) {
+    let screen = p.screen();
+    let (height, width) = screen.size();
+    (*rows, *cols) = (0, 0);
+    for row in 0..height {
+        for col in (0..width).rev() {
+            if let Some(cell) = screen.cell(row, col) {
+                if cell.has_contents() || cell.bgcolor() != Color::Default || cell.inverse() {
+                    *cols = (*cols).max((col + 1 + u16::from(cell.is_wide())).min(width));
+                    *rows = row + 1;
+                    break;
+                }
+            }
+        }
+    }
+}
+
 #[no_mangle]
 extern "C" fn mt_cell(p: &Parser, row: u16, col: u16, out: &mut Paint) -> bool {
     let Some(cell) = p.screen().cell(row, col) else {
@@ -438,6 +457,25 @@ unsafe extern "C" fn mt_find(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn content_extent_tracks_wide_glyphs_backgrounds_and_scrollback() {
+        let mut p = parser(2, 8, 100);
+        let extent = |p: &Parser| {
+            let (mut rows, mut cols) = (0, 0);
+            mt_content_size(p, &mut rows, &mut cols);
+            (rows, cols)
+        };
+        assert_eq!(extent(&p), (0, 0));
+        p.process("a界".as_bytes());
+        assert_eq!(extent(&p), (1, 3));
+        p.process(b"\x1b[2;6H\x1b[41m\x1b[K\x1b[0m");
+        assert_eq!(extent(&p), (2, 8));
+        p.process(b"\r\n\r\n");
+        assert_eq!(extent(&p), (0, 0));
+        p.screen_mut().set_scrollback(2);
+        assert_eq!(extent(&p), (2, 8));
+    }
+
     #[test]
     fn reports_are_ordered_and_use_the_cursor_at_request_time() {
         let mut p = parser(4, 10, 0);

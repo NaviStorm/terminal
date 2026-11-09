@@ -1,6 +1,7 @@
 #import "TerminalView.h"
 #import "Engine.h"
 #import "ColorProfiles.h"
+#import <QuartzCore/QuartzCore.h>
 #import <util.h>
 #import <libproc.h>
 #import <fcntl.h>
@@ -97,6 +98,9 @@ static const NSInteger maximumFontSize = 72;
 
 - (instancetype)initWithFrame:(NSRect)frame directory:(NSString *)directory {
     if ((self = [super initWithFrame:frame])) {
+        self.wantsLayer = YES;
+        self.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
+        self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
         _directory = [directory copy] ?: NSHomeDirectory();
         _profile = MTProfiles.shared.defaultProfile;
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(profilesChanged:)
@@ -231,6 +235,7 @@ static const NSInteger maximumFontSize = 72;
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];
     [self resizeGrid];
+    self.needsDisplay = YES;
 }
 
 - (NSString *)currentDirectory {
@@ -838,12 +843,14 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     self.needsDisplay = YES;
 }
 
-- (void)drawRect:(NSRect)dirty {
-    [NSBezierPath clipRect:self.bounds];
-    CGFloat gridTop = self.gridTop;
-    MTPalette *palette = [_profile paletteForAppearance:self.effectiveAppearance];
-    [[palette color:MTBackground] setFill];
-    NSRectFill(dirty);
+- (BOOL)wantsUpdateLayer { return YES; }
+
+- (void)viewDidChangeBackingProperties {
+    [super viewDidChangeBackingProperties];
+    self.needsDisplay = YES;
+}
+
+- (NSRange)visibleSelection {
     NSRange selection = NSMakeRange(0, 0);
     if (_anchor >= 0 && _focus >= 0) {
         NSInteger first = MIN(_anchor, _focus), last = MAX(_anchor, _focus);
@@ -852,7 +859,66 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
         if (mt_cell(_parser, last/_cols, last%_cols, &edge) && edge.wide && last%_cols + 1 < _cols) last++;
         selection = NSMakeRange(first, last - first + 1);
     }
-    for (uint16_t row = 0; row < _rows; row++) {
+    return selection;
+}
+
+- (void)updateLayer {
+    if (!_parser) return;
+    MTPalette *palette = [_profile paletteForAppearance:self.effectiveAppearance];
+    NSColor *background = [palette color:MTBackground];
+    BOOL dim = [self.superview isKindOfClass:NSSplitView.class] && self.window.firstResponder != self;
+    NSColor *veil = [NSColor colorWithWhite:0.5 alpha:1];
+    self.layer.backgroundColor = (dim ? [background blendedColorWithFraction:0.32 ofColor:veil] : background).CGColor;
+
+    uint16_t rows = 0, cols = 0, row = 0, col = 0;
+    mt_content_size(_parser, &rows, &cols);
+    NSRange selection = [self visibleSelection];
+    if (selection.length) {
+        NSUInteger last = NSMaxRange(selection) - 1;
+        rows = MAX(rows, last/_cols + 1);
+        cols = MAX(cols, selection.location/_cols == last/_cols ? last%_cols + 1 : _cols);
+    }
+    BOOL cursor = !_status && self.window.firstResponder == self && mt_cursor(_parser,&row,&col);
+    if (cursor) { rows = MAX(rows,row+1); cols = MAX(cols,col+1); }
+    // Le fond uni est porté par la couche. Seule la zone dessinée a une image.
+    NSRect area = NSZeroRect;
+    if (rows && cols)
+        area = NSMakeRect(0,0,inset + cols*_cw + _cw,self.gridTop + rows*_ch + 1);
+    if (self.hasMarkedText) area = NSUnionRect(area, [self compositionRect]);
+    if (_status) area = self.bounds;
+    area = NSIntersectionRect(self.bounds, NSMakeRect(0,0,NSMaxX(area),NSMaxY(area)));
+    if (NSIsEmptyRect(area)) { self.layer.contents = nil; return; }
+
+    CGFloat scale = self.window.backingScaleFactor ?: 1;
+    size_t w = ceil(NSWidth(area)*scale), h = ceil(NSHeight(area)*scale);
+    CGContextRef bitmap = CGBitmapContextCreate(NULL,w,h,8,0,NSColorSpace.sRGBColorSpace.CGColorSpace,
+        kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host);
+    if (!bitmap) return;
+    CGContextTranslateCTM(bitmap,0,h);
+    CGContextScaleCTM(bitmap,scale,-scale);
+    [NSGraphicsContext saveGraphicsState];
+    NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithCGContext:bitmap flipped:YES];
+    CGContextClearRect(bitmap, CGRectMake(0,0,w/scale,h/scale));
+    [self drawCellsInRows:rows columns:cols palette:palette selection:selection];
+    if (cursor) {
+        [[palette color:MTCursor] setFill];
+        NSRectFill(NSMakeRect(inset+col*_cw,self.gridTop+(1+row)*_ch-2,_cw,2));
+    }
+    [self drawInputAndStatus:palette];
+    if (dim) {
+        [[veil colorWithAlphaComponent:0.32] setFill];
+        NSRectFillUsingOperation(NSMakeRect(0,0,w/scale,h/scale), NSCompositingOperationSourceAtop);
+    }
+    [NSGraphicsContext restoreGraphicsState];
+    CGImageRef image = CGBitmapContextCreateImage(bitmap);
+    CGContextRelease(bitmap);
+    self.layer.contentsScale = scale;
+    self.layer.contents = CFBridgingRelease(image);
+}
+
+- (void)drawCellsInRows:(uint16_t)rows columns:(uint16_t)cols palette:(MTPalette *)palette selection:(NSRange)selection {
+    CGFloat gridTop = self.gridTop;
+    for (uint16_t row = 0; row < MIN(rows,_rows); row++) {
         @autoreleasepool {
             NSUInteger rowStart = row * _cols;
             NSRange highlight = NSIntersectionRange(selection, NSMakeRange(rowStart, _cols));
@@ -861,11 +927,10 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
                 NSRectFill(NSMakeRect(inset + (highlight.location - rowStart) * _cw,
                                       gridTop + row * _ch, highlight.length * _cw, _ch));
             }
-            for (uint16_t col = 0; col < _cols; col++) {
+            for (uint16_t col = 0; col < MIN(cols,_cols); col++) {
                 MTPaint cell;
                 if (!mt_cell(_parser,row,col,&cell)) continue;
                 CGRect rect = CGRectMake(inset+col*_cw,gridTop+row*_ch,_cw*(cell.wide ? 2 : 1),_ch);
-                if (!CGRectIntersectsRect(rect,dirty)) continue;
                 BOOL selected = NSLocationInRange(rowStart + col, highlight);
                 if (!selected && cell.bg != MTPaletteReference + MTBackground) {
                     [[palette resolve:cell.bg] setFill];
@@ -881,11 +946,9 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
             }
         }
     }
-    uint16_t row = 0, col = 0;
-    if (!_status && self.window.firstResponder == self && mt_cursor(_parser,&row,&col)) {
-        [[palette color:MTCursor] setFill];
-        NSRectFill(NSMakeRect(inset+col*_cw,gridTop+(1+row)*_ch-2,_cw,2));
-    }
+}
+
+- (void)drawInputAndStatus:(MTPalette *)palette {
     if (self.hasMarkedText && self.window.firstResponder == self) {
         NSRect rect = [self compositionRect];
         [[palette color:MTBackground] setFill];
@@ -899,9 +962,5 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     if (_status) [_status drawAtPoint:NSMakePoint(inset,NSMaxY(self.bounds)-_ch)
                        withAttributes:@{NSForegroundColorAttributeName:[palette color:MTForeground],
                                         NSBackgroundColorAttributeName:[palette color:MTBackground]}];
-    if ([self.superview isKindOfClass:NSSplitView.class] && self.window.firstResponder != self) {
-        [[NSColor colorWithWhite:0.5 alpha:0.32] setFill];
-        NSRectFillUsingOperation(dirty, NSCompositingOperationSourceOver);
-    }
 }
 @end
