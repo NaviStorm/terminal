@@ -15,6 +15,20 @@ static char tabOrderContext;
 - (NSView *)hitTest:(NSPoint)point { return nil; }
 @end
 
+@interface MTSessionHost : NSView
+@end
+@implementation MTSessionHost
+- (void)layout {
+    [super layout];
+    self.subviews.firstObject.frame = self.bounds;
+}
+- (void)didAddSubview:(NSView *)subview {
+    [super didAddSubview:subview];
+    subview.frame = self.bounds;
+    self.needsLayout = YES;
+}
+@end
+
 @interface MTTerminalWindow : NSWindow
 @property(nonatomic,readonly) NSView *sessionHost;
 - (void)prepareSessionHost;
@@ -25,7 +39,7 @@ static char tabOrderContext;
 - (void)prepareSessionHost {
     NSView *root = self.contentView;
     NSLayoutGuide *guide = self.contentLayoutGuide;
-    _sessionHost = [NSView new];
+    _sessionHost = [MTSessionHost new];
     MTTitlebarBackground *bar = [MTTitlebarBackground new];
     bar.wantsLayer = YES;
     bar.translatesAutoresizingMaskIntoConstraints = NO;
