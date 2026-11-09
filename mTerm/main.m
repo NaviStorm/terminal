@@ -60,6 +60,23 @@ static char tabOrderContext;
     NSHashTable<NSWindow *> *_fullScreenTransitions;
 }
 
+- (void)applicationWillFinishLaunching:(NSNotification *)note {
+    NSBundle *bundle = NSBundle.mainBundle;
+    NSString *iconFile = [bundle objectForInfoDictionaryKey:@"CFBundleIconFile"];
+    if (!iconFile.length) return;
+    NSURL *url = [bundle URLForResource:iconFile.stringByDeletingPathExtension withExtension:@"icns"];
+    NSImage *image = url ? [[NSImage alloc] initWithContentsOfURL:url] : nil;
+    if (!image) return;
+
+    // Dessiner la ressource transparente directement dans la tuile du Dock.
+    NSDockTile *tile = NSApp.dockTile;
+    NSImageView *view = [[NSImageView alloc] initWithFrame:(NSRect){NSZeroPoint, tile.size}];
+    view.imageScaling = NSImageScaleProportionallyUpOrDown;
+    view.image = image;
+    tile.contentView = view;
+    [tile display];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     NSMenu *bar = [NSMenu new];
     NSMenu *app = [NSMenu new];
