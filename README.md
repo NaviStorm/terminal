@@ -24,7 +24,7 @@ Depuis la racine du dépôt, avec un accès en écriture à `/Applications` :
 ./scripts/build_release_mac.sh && open /Applications/mTerm.app
 ```
 
-Le script compile en Release dans `DerivedData/`, prépare la nouvelle application et vérifie sa signature avant de remplacer la version installée. [Script d’installation](scripts/build_release_mac.sh)
+Le script compile en Release dans `DerivedData/` avec une identité **Developer ID Application** de l’équipe configurée. Le certificat et sa clé privée doivent être disponibles dans le trousseau. Le script vérifie la signature avant de remplacer la version installée. Dans Xcode, Debug et Release utilisent la signature automatique. [Script d’installation](scripts/build_release_mac.sh)
 
 ## Architecture
 
