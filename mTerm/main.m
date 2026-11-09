@@ -4,6 +4,35 @@
 
 static NSString *const terminalFrameName = @"TerminalWindow";
 
+@interface MTTerminalWindow : NSWindow
+@end
+
+@implementation MTTerminalWindow
+- (void)highlightActiveTab {
+    NSMutableAttributedString *label = [[NSMutableAttributedString alloc]
+        initWithString:[@"●  " stringByAppendingString:self.title]
+        attributes:@{NSFontAttributeName:[NSFont boldSystemFontOfSize:NSFont.systemFontSize],
+                     NSForegroundColorAttributeName:NSColor.labelColor}];
+    [label addAttribute:NSForegroundColorAttributeName value:NSColor.controlAccentColor range:NSMakeRange(0,1)];
+    self.tab.attributedTitle = label;
+}
+
+- (void)becomeMainWindow {
+    [super becomeMainWindow];
+    [self highlightActiveTab];
+}
+
+- (void)resignMainWindow {
+    [super resignMainWindow];
+    self.tab.attributedTitle = nil;
+}
+
+- (void)setTitle:(NSString *)title {
+    [super setTitle:title];
+    if (self.mainWindow) [self highlightActiveTab];
+}
+@end
+
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSSplitViewDelegate, NSMenuItemValidation, MTTerminalWindowDelegate>
 @end
 
@@ -63,7 +92,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 - (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:frame
+    NSWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
         backing:NSBackingStoreBuffered defer:NO];
     window.title = @"mTerm";
