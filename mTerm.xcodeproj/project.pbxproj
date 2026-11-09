@@ -113,6 +113,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0505716D426C177934A68886 /* Build configuration list for PBXNativeTarget "mTerm" */;
 			buildPhases = (
+				DE23B4449DC9437399C8074E /* Calculer le numéro de build Git */,
 				D0BCC3BD2AEED70684BA390D /* Compiler le moteur Rust */,
 				FF81E008ECB6B45539EC9044 /* Sources */,
 				6F83147A5F6D73870EE8A7D3 /* Frameworks */,
@@ -187,6 +188,18 @@
 			shellPath = /bin/sh;
 			shellScript = "/bin/sh \"$SRCROOT/scripts/build-engine.sh\"";
 		};
+		DE23B4449DC9437399C8074E /* Calculer le numéro de build Git */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ("$(SRCROOT)/mTerm/Info.plist",);
+			name = "Calculer le numéro de build Git";
+			outputPaths = ("$(DERIVED_FILE_DIR)/BuildVersion.plist",);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\ncount=$(git -C \"$SRCROOT\" rev-list --count HEAD)\nplist=\"$SCRIPT_OUTPUT_FILE_0\"\ncp \"$SCRIPT_INPUT_FILE_0\" \"$plist\"\nplutil -insert CFBundleVersion -string \"$count\" \"$plist\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -213,9 +226,9 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/BuildVersion.plist";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
@@ -355,9 +368,9 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/BuildVersion.plist";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 12.0;

@@ -81,6 +81,8 @@ static char tabOrderContext;
     NSMenu *bar = [NSMenu new];
     NSMenu *app = [NSMenu new];
     [bar addItemWithTitle:@"mTerm" action:nil keyEquivalent:@""].submenu = app;
+    [app addItemWithTitle:@"À propos de mTerm" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""].target = NSApp;
+    [app addItem:NSMenuItem.separatorItem];
     [app addItemWithTitle:@"Réglages…" action:@selector(showSettings:) keyEquivalent:@","].target = self;
     [app addItem:NSMenuItem.separatorItem];
     [app addItemWithTitle:@"Masquer mTerm" action:@selector(hide:) keyEquivalent:@"h"].target = NSApp;
