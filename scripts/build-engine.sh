@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:/opt/homebrew/opt/rustup/bin:/usr/local/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export CARGO_TARGET_DIR="$PROJECT_TEMP_DIR/cargo"
 profile=debug
 if [ "$CONFIGURATION" = Release ]; then profile=release; fi

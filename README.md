@@ -4,7 +4,7 @@ mTerm est un terminal natif pour macOS 14.6 ou ultérieur. L’interface est éc
 
 ## Compiler et lancer en développement
 
-Installez Xcode et une chaîne Rust avec Cargo pour l’architecture de votre Mac. Python 3 sert aux scripts de vérification. Clonez le dépôt avec son historique Git pour que le numéro de build, calculé par `git rev-list --count HEAD`, corresponde à celui du projet.
+Installez Xcode et une chaîne Rust avec Cargo. Pour créer une archive universelle avec **Product → Archive**, installez les deux cibles Rust avec `rustup toolchain install stable --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin`. Python 3 sert aux scripts de vérification. Clonez le dépôt avec son historique Git pour que le numéro de build, calculé par `git rev-list --count HEAD`, corresponde à celui du projet.
 
 ```sh
 git clone https://github.com/NaviStorm/terminal.git
