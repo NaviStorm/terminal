@@ -4,15 +4,31 @@
 
 static NSString *const terminalFrameName = @"TerminalWindow";
 
+static char tabOrderContext;
+
 @interface MTTerminalWindow : NSWindow
+- (void)observeTabOrder;
 @end
 
 @implementation MTTerminalWindow
+- (void)observeTabOrder {
+    [self addObserver:self forKeyPath:@"tabGroup.windows" options:NSKeyValueObservingOptionInitial context:&tabOrderContext];
+}
+
+- (void)observeValueForKeyPath:(NSString *)path ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if (context == &tabOrderContext) [self styleTabAsActive:self.mainWindow];
+    else [super observeValueForKeyPath:path ofObject:object change:change context:context];
+}
+
 - (void)styleTabAsActive:(BOOL)active {
     NSString *marker = active ? @"●  " : @"○  ";
     NSFontWeight weight = active ? NSFontWeightBold : NSFontWeightMedium;
+    NSArray *windows = self.tabGroup.windows;
+    NSUInteger index = [windows indexOfObjectIdenticalTo:self];
+    NSString *number = [NSString stringWithFormat:@"#%lu", (unsigned long)(index == NSNotFound ? 1 : index + 1)];
+    self.tab.title = number;
     NSMutableAttributedString *label = [[NSMutableAttributedString alloc]
-        initWithString:[marker stringByAppendingString:self.title]
+        initWithString:[marker stringByAppendingString:number]
         attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:NSFont.systemFontSize weight:weight],
                      NSForegroundColorAttributeName:NSColor.labelColor}];
     if (active) [label addAttribute:NSForegroundColorAttributeName value:NSColor.controlAccentColor range:NSMakeRange(0,1)];
@@ -31,7 +47,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 - (void)setTitle:(NSString *)title {
     [super setTitle:title];
-    [self styleTabAsActive:self.mainWindow];
+    self.tab.toolTip = title;
 }
 @end
 
@@ -96,7 +112,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 - (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
-    NSWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
+    MTTerminalWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
         backing:NSBackingStoreBuffered defer:NO];
     window.title = @"mTerm";
@@ -119,6 +135,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
     [window makeFirstResponder:view];
     [window makeKeyAndOrderFront:nil];
     window.tabbingMode = NSWindowTabbingModeAutomatic;
+    [window observeTabOrder];
 }
 
 - (NSMenu *)menuForTerminal:(TerminalView *)terminal {
@@ -344,6 +361,7 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 - (void)windowWillClose:(NSNotification *)note {
     NSWindow *window = note.object;
     if (_windows.count == 1) [self saveNormalFrame:window];
+    [window removeObserver:window forKeyPath:@"tabGroup.windows" context:&tabOrderContext];
     [self stopSessionsInView:window.contentView];
     [_windows removeObject:window];
 }
