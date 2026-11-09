@@ -6,11 +6,44 @@ static NSString *const terminalFrameName = @"TerminalWindow";
 
 static char tabOrderContext;
 
+@interface MTTitlebarBackground : NSView
+@end
+@implementation MTTitlebarBackground
+- (BOOL)wantsUpdateLayer { return YES; }
+- (void)updateLayer { self.layer.backgroundColor = [NSColor.windowBackgroundColor colorWithAlphaComponent:1].CGColor; }
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
 @interface MTTerminalWindow : NSWindow
+@property(nonatomic,readonly) NSView *sessionHost;
+- (void)prepareSessionHost;
 - (void)observeTabOrder;
 @end
 
 @implementation MTTerminalWindow
+- (void)prepareSessionHost {
+    NSView *root = self.contentView;
+    NSLayoutGuide *guide = self.contentLayoutGuide;
+    _sessionHost = [NSView new];
+    MTTitlebarBackground *bar = [MTTitlebarBackground new];
+    bar.wantsLayer = YES;
+    bar.translatesAutoresizingMaskIntoConstraints = NO;
+    _sessionHost.translatesAutoresizingMaskIntoConstraints = NO;
+    [root addSubview:bar];
+    [root addSubview:_sessionHost];
+    [NSLayoutConstraint activateConstraints:@[
+        [_sessionHost.topAnchor constraintEqualToAnchor:guide.topAnchor],
+        [_sessionHost.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor],
+        [_sessionHost.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
+        [_sessionHost.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
+        [bar.topAnchor constraintEqualToAnchor:root.topAnchor],
+        [bar.bottomAnchor constraintEqualToAnchor:_sessionHost.topAnchor],
+        [bar.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [bar.trailingAnchor constraintEqualToAnchor:root.trailingAnchor]
+    ]];
+    [root layoutSubtreeIfNeeded];
+}
 - (void)observeTabOrder {
     [self addObserver:self forKeyPath:@"tabGroup.windows" options:NSKeyValueObservingOptionInitial context:&tabOrderContext];
 }
@@ -205,7 +238,7 @@ static BOOL HasTransparentPane(NSView *view) {
 - (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
     MTTerminalWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
-        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView
         backing:NSBackingStoreBuffered defer:NO];
     window.title = @"mTerm";
     window.releasedWhenClosed = NO;
@@ -216,9 +249,12 @@ static BOOL HasTransparentPane(NSView *view) {
     if (!parent && (_windows.count || ![window setFrameUsingName:terminalFrameName])) {
         [window center];
     }
-    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.contentView.bounds
+    [window prepareSessionHost];
+    TerminalView *view = existing ?: [[TerminalView alloc] initWithFrame:window.sessionHost.bounds
                                                                    directory:parent ? [self activeTerminal].currentDirectory : nil];
-    window.contentView = view;
+    view.frame = window.sessionHost.bounds;
+    view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [window.sessionHost addSubview:view];
     [self updateBackgroundForWindow:window];
     [_windows addObject:window];
     if (parent) {
@@ -327,7 +363,7 @@ static BOOL HasTransparentPane(NSView *view) {
     CGFloat high = horizontal ? NSMaxY(source) : NSMaxX(source);
     CGFloat bestGap = CGFLOAT_MAX, bestOverlap = 0;
     TerminalView *best = nil;
-    NSMutableArray<NSView *> *pending = [NSMutableArray arrayWithObject:current.window.contentView];
+    NSMutableArray<NSView *> *pending = [((MTTerminalWindow *)current.window).sessionHost.subviews mutableCopy];
     while (pending.count) {
         NSView *view = pending.lastObject;
         [pending removeLastObject];
@@ -354,11 +390,10 @@ static BOOL HasTransparentPane(NSView *view) {
     if (best) [current.window makeFirstResponder:best];
 }
 
-- (void)replacePane:(NSView *)old with:(NSView *)replacement inWindow:(NSWindow *)window {
+- (void)replacePane:(NSView *)old with:(NSView *)replacement {
     replacement.frame = old.frame;
     replacement.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    if (old == window.contentView) window.contentView = replacement;
-    else [old.superview replaceSubview:old with:replacement];
+    [old.superview replaceSubview:old with:replacement];
 }
 
 - (void)splitActivePaneVertically:(BOOL)vertical {
@@ -377,7 +412,7 @@ static BOOL HasTransparentPane(NSView *view) {
     else pane.size.height = half;
     TerminalView *next = [[TerminalView alloc] initWithFrame:pane directory:current.currentDirectory];
     next.profile = current.profile;
-    [self replacePane:current with:split inWindow:window];
+    [self replacePane:current with:split];
     current.frame = pane;
     [split addSubview:current];
     [split addSubview:next];
@@ -404,7 +439,7 @@ static BOOL HasTransparentPane(NSView *view) {
     NSView *remaining = split.subviews.firstObject == current ? split.subviews.lastObject : split.subviews.firstObject;
     [remaining removeFromSuperview];
     [current removeFromSuperview];
-    [self replacePane:split with:remaining inWindow:window];
+    [self replacePane:split with:remaining];
     [self updateBackgroundForWindow:window];
     if ([previousFocus isKindOfClass:TerminalView.class] && previousFocus != current) {
         [window makeFirstResponder:previousFocus];
@@ -425,7 +460,7 @@ static BOOL HasTransparentPane(NSView *view) {
 - (void)terminalSessionDidEnd:(TerminalView *)terminal {
     if ([terminal.superview isKindOfClass:NSSplitView.class]) {
         [self removePaneFromSplit:terminal];
-    } else if (terminal.window.contentView == terminal) {
+    } else if (terminal.window && terminal.superview == ((MTTerminalWindow *)terminal.window).sessionHost) {
         [terminal.window close];
     }
 }

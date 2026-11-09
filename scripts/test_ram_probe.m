@@ -68,8 +68,33 @@ static void startPeakSampler(void) {
     dispatch_resume(sampler);
 }
 
+// La copie de test a son propre bundle ID. Amorcer uniquement ses préférences
+// de profil avant que mTerm ne crée la première session.
+static void loadProfiles(void) {
+    NSString *source = @(getenv("MTERM_TEST_SOURCE"));
+    NSString *requested = @(getenv("MTERM_TEST_PROFILE"));
+    unsetenv("MTERM_TEST_SOURCE");
+    unsetenv("MTERM_TEST_PROFILE");
+    NSDictionary *stored = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("ColorProfiles"), (__bridge CFStringRef)source));
+    NSMutableDictionary *profiles = [stored mutableCopy];
+    if (requested.length) {
+        NSString *match = nil;
+        for (NSDictionary *record in profiles[@"items"]) {
+            if ([requested isEqual:record[@"name"]]) {
+                if (match) fail([NSString stringWithFormat:@"plusieurs profils portent le nom « %@ »", requested]);
+                match = record[@"id"];
+            }
+        }
+        if (!match && (profiles[@"items"] || ![requested isEqual:@"Défaut"]))
+            fail([NSString stringWithFormat:@"profil « %@ » introuvable dans l’application mesurée", requested]);
+        if (match) profiles[@"default"] = match;
+    }
+    if (profiles) [NSUserDefaults.standardUserDefaults registerDefaults:@{@"ColorProfiles":profiles}];
+}
+
 __attribute__((constructor)) static void startTest(void) {
     unsetenv("DYLD_INSERT_LIBRARIES"); // Les shells sont mesurés sans la sonde.
+    @autoreleasepool { loadProfiles(); }
     dispatch_async(dispatch_get_main_queue(), ^{
         panes = NSHashTable.weakObjectsHashTable;
         headers = NSHashTable.weakObjectsHashTable;
@@ -88,6 +113,10 @@ __attribute__((constructor)) static void startTest(void) {
                            [[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] UTF8String],
                            [[bundle objectForInfoDictionaryKey:@"CFBundleVersion"] UTF8String],
                            NSWidth(window.frame), NSHeight(window.frame), window.backingScaleFactor);
+                    observeViews(window.contentView);
+                    id profile = [panes.anyObject valueForKey:@"profile"];
+                    if (!profile) fail(@"profil de la session de test introuvable");
+                    printf("Profil : %s\n\n", [[profile valueForKey:@"name"] UTF8String]);
                     puts("| État | RAM de mTerm | RAM des shells zsh, séparément |\n|---|---:|---:|");
                     break;
                 }

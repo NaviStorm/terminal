@@ -83,9 +83,6 @@ static const NSInteger maximumFontSize = 72;
     int32_t _initialFirst, _initialLast;
     NSTrackingArea *_tracking;
     MTPaneHeader *_paneHeader;
-    MTBackgroundImage *_backdrop;
-    NSString *_loadedPath;
-    CALayer *_photoLayer, *_photoVeil, *_inkLayer;
     NSString *_shellName;
     NSString *_status, *_directory, *_shellTitle, *_query;
     pid_t _shellPID;
@@ -148,7 +145,7 @@ static const NSInteger maximumFontSize = 72;
     CGFloat cellHeight = ceil(font.ascender - font.descender + font.leading);
     NSWindow *window = self.window;
     NSRect frame = window.frame;
-    BOOL resizeWindow = window.contentView == self && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
+    BOOL resizeWindow = window && ![self.superview isKindOfClass:NSSplitView.class] && _parser && !(window.styleMask & NSWindowStyleMaskFullScreen);
     if (resizeWindow) {
         CGFloat width = MAX(window.contentMinSize.width, ceil(2 * inset + _cols * cellWidth));
         CGFloat height = MAX(window.contentMinSize.height, ceil(2 * inset + _rows * cellHeight));
@@ -843,34 +840,6 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
 }
 
 - (void)refreshProfileBackground {
-    NSString *path = _profile.backgroundOpacity ? _profile.imagePath : nil;
-    if (_loadedPath != path && ![_loadedPath isEqualToString:path]) {
-        _loadedPath = [path copy];
-        _backdrop = [MTBackgroundImage imageAtPath:path];
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        if (_backdrop && !_photoLayer) {
-            _photoLayer = [CALayer layer];
-            _photoLayer.contentsGravity = kCAGravityResizeAspectFill;
-            _photoLayer.masksToBounds = YES;
-            _photoVeil = [CALayer layer];
-            _photoVeil.backgroundColor = [NSColor.grayColor colorWithAlphaComponent:0.32].CGColor;
-            [_photoLayer addSublayer:_photoVeil];
-            _inkLayer = [CALayer layer];
-            [self.layer insertSublayer:_photoLayer atIndex:0];
-            [self.layer insertSublayer:_inkLayer above:_photoLayer];
-            self.layer.contents = nil;
-        } else if (!_backdrop && _photoLayer) {
-            [_photoLayer removeFromSuperlayer];
-            [_inkLayer removeFromSuperlayer];
-            _photoLayer = nil;
-            _photoVeil = nil;
-            _inkLayer = nil;
-        }
-        _photoLayer.contents = (__bridge id)_backdrop.pixels;
-        [CATransaction commit];
-        self.needsDisplay = YES;
-    }
     [self applyBackgroundColor];
     id<MTTerminalWindowDelegate> delegate = (id)self.window.delegate;
     if ([delegate respondsToSelector:@selector(updateBackgroundForWindow:)])
@@ -884,16 +853,7 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     CGFloat opacity = _profile.backgroundOpacity / 100.0;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    if (_photoLayer) {
-        self.layer.backgroundColor = nil;
-        _photoLayer.frame = self.layer.bounds;
-        _photoLayer.backgroundColor = color.CGColor;
-        _photoLayer.opacity = opacity;
-        _photoVeil.frame = _photoLayer.bounds;
-        _photoVeil.hidden = !dim;
-    } else {
-        self.layer.backgroundColor = [color colorWithAlphaComponent:opacity].CGColor;
-    }
+    self.layer.backgroundColor = [color colorWithAlphaComponent:opacity].CGColor;
     [CATransaction commit];
 }
 
@@ -939,7 +899,6 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     [self applyBackgroundColor];
     BOOL dim = [self.superview isKindOfClass:NSSplitView.class] && self.window.firstResponder != self;
     NSColor *veil = [NSColor colorWithWhite:0.5 alpha:1];
-    CALayer *ink = _inkLayer ?: self.layer;
 
     uint16_t rows = 0, cols = 0, row = 0, col = 0;
     mt_content_size(_parser, &rows, &cols);
@@ -958,7 +917,7 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     if (self.hasMarkedText) area = NSUnionRect(area, [self compositionRect]);
     if (_status) area = self.bounds;
     area = NSIntersectionRect(self.bounds, NSMakeRect(0,0,NSMaxX(area),NSMaxY(area)));
-    if (NSIsEmptyRect(area)) { ink.contents = nil; return; }
+    if (NSIsEmptyRect(area)) { self.layer.contents = nil; return; }
 
     CGFloat scale = self.window.backingScaleFactor ?: 1;
     size_t w = ceil(NSWidth(area)*scale), h = ceil(NSHeight(area)*scale);
@@ -985,9 +944,8 @@ static void AppendShellPath(NSMutableString *text, NSString *path) {
     CGContextRelease(bitmap);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    if (_inkLayer) _inkLayer.frame = [self convertRectToLayer:NSMakeRect(0,0,w/scale,h/scale)];
-    ink.contentsScale = scale;
-    ink.contents = CFBridgingRelease(image);
+    self.layer.contentsScale = scale;
+    self.layer.contents = CFBridgingRelease(image);
     [CATransaction commit];
 }
 

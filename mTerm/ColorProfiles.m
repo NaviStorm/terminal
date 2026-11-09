@@ -1,5 +1,4 @@
 #import "ColorProfiles.h"
-#import <ImageIO/ImageIO.h>
 
 NSNotificationName const MTBackgroundChanged = @"MTBackgroundChanged";
 NSNotificationName const MTProfilesChanged = @"MTProfilesChanged";
@@ -135,34 +134,6 @@ static BOOL ReadColor(id entry, uint32_t *result) {
 }
 @end
 
-@implementation MTBackgroundImage
-+ (instancetype)imageAtPath:(NSString *)path {
-    if (!path.length) return nil;
-    static NSMapTable<NSString *, MTBackgroundImage *> *cache;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = NSMapTable.strongToWeakObjectsMapTable; });
-    MTBackgroundImage *image = [cache objectForKey:path];
-    if (image) return image;
-    NSDictionary *options = @{(__bridge NSString *)kCGImageSourceShouldCache:@NO};
-    CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path],
-                                                         (__bridge CFDictionaryRef)options);
-    if (!source) return nil;
-    NSDictionary *thumbnail = @{(__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways:@YES,
-                                (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform:@YES,
-                                (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize:@2048,
-                                (__bridge NSString *)kCGImageSourceShouldCacheImmediately:@YES};
-    CGImageRef pixels = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)thumbnail);
-    CFRelease(source);
-    if (!pixels) return nil;
-    image = [self new];
-    image->_pixels = pixels;
-    image->_path = [path copy];
-    [cache setObject:image forKey:path];
-    return image;
-}
-- (void)dealloc { if (_pixels) CGImageRelease(_pixels); }
-@end
-
 @implementation MTProfile
 - (instancetype)initWithRecord:(NSDictionary *)record {
     if ((self = [super init])) {
@@ -172,17 +143,13 @@ static BOOL ReadColor(id entry, uint32_t *result) {
         _dark = record[@"dark"] ? [MTPalette fromData:record[@"dark"] fallback:0] : _light;
         NSNumber *opacity = record[@"backgroundOpacity"];
         _backgroundOpacity = opacity ? MAX(0, MIN(100, opacity.integerValue)) : 100;
-        _imagePath = [record[@"imagePath"] copy];
         _separate = [record[@"separate"] boolValue];
     }
     return self;
 }
 - (NSDictionary *)record {
-    NSMutableDictionary *record = [@{@"id":_identifier, @"name":_name, @"palette":_light.data,
-                                     @"dark":_dark.data, @"separate":@(_separate),
-                                     @"backgroundOpacity":@(_backgroundOpacity)} mutableCopy];
-    if (_imagePath.length) record[@"imagePath"] = _imagePath;
-    return record;
+    return @{@"id":_identifier, @"name":_name, @"palette":_light.data, @"dark":_dark.data,
+             @"separate":@(_separate), @"backgroundOpacity":@(_backgroundOpacity)};
 }
 - (MTPalette *)paletteForAppearance:(NSAppearance *)appearance {
     if (!_separate) return _light;
@@ -237,7 +204,6 @@ static BOOL ReadColor(id entry, uint32_t *result) {
         p.light = source.light;
         p.dark = source.dark;
         p.separate = source.separate;
-        p.imagePath = source.imagePath;
         p.backgroundOpacity = source.backgroundOpacity;
     }
     [_items addObject:p];

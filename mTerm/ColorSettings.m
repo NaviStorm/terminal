@@ -35,10 +35,8 @@ void MTShowColorSettings(void) {
     MTProfile *_profile;
     NSTableView *_list;
     MTOpacitySlider *_opacity;
-    NSTextField *_percentage, *_imageName;
-    NSButton *_removeImage;
+    NSTextField *_percentage;
     CALayer *_previewBackground;
-    MTBackgroundImage *_previewImage;
     NSTextField *_name, *_preview;
     NSButton *_separate, *_makeDefault, *_remove;
     NSSegmentedControl *_mode;
@@ -63,7 +61,7 @@ void MTShowColorSettings(void) {
 }
 
 - (instancetype)init {
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,770,565)
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,770,522)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:YES];
     if ((self = [super initWithWindow:window])) {
         window.title = @"Réglages — Profils de couleurs";
@@ -102,7 +100,7 @@ void MTShowColorSettings(void) {
 
     NSBox *line = [NSBox new];
     line.boxType = NSBoxSeparator;
-    [self add:line frame:NSMakeRect(220,0,1,565)];
+    [self add:line frame:NSMakeRect(220,0,1,522)];
     [self label:@"Nom du profil" x:241 y:20 width:120];
     _name = [NSTextField new];
     _name.delegate = self;
@@ -145,13 +143,7 @@ void MTShowColorSettings(void) {
     [self label:@"Palette ANSI" x:241 y:277 width:170];
     [self label:@"Normales" x:241 y:312 width:75];
     [self label:@"Intenses" x:241 y:347 width:75];
-    [self label:@"Image de fond" x:241 y:389 width:130];
-    _imageName = [NSTextField labelWithString:@""];
-    _imageName.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    [self add:_imageName frame:NSMakeRect(378,389,159,20)];
-    [self button:@"Choisir…" action:@selector(chooseImage:) frame:NSMakeRect(538,383,98,30)];
-    _removeImage = [self button:@"Retirer" action:@selector(removeImage:) frame:NSMakeRect(640,383,106,30)];
-    [self label:@"Opacité du fond" x:241 y:432 width:135];
+    [self label:@"Opacité du fond" x:241 y:389 width:135];
     _opacity = [MTOpacitySlider new];
     _opacity.minValue = 0;
     _opacity.maxValue = 100;
@@ -159,22 +151,20 @@ void MTShowColorSettings(void) {
     _opacity.target = self;
     _opacity.action = @selector(changeOpacity:);
     [_opacity setAccessibilityLabel:@"Opacité du fond en pourcentage"];
-    [self add:_opacity frame:NSMakeRect(375,425,307,28)];
+    [self add:_opacity frame:NSMakeRect(375,382,307,28)];
     _percentage = [NSTextField labelWithString:@""];
     _percentage.alignment = NSTextAlignmentRight;
-    [self add:_percentage frame:NSMakeRect(685,431,60,20)];
-    [self label:@"Aperçu" x:241 y:474 width:100];
-    NSView *previewHost = [[NSView alloc] initWithFrame:NSMakeRect(241,501,504,33)];
+    [self add:_percentage frame:NSMakeRect(685,388,60,20)];
+    [self label:@"Aperçu" x:241 y:431 width:100];
+    NSView *previewHost = [[NSView alloc] initWithFrame:NSMakeRect(241,458,504,33)];
     previewHost.wantsLayer = YES;
     _previewBackground = [CALayer layer];
     _previewBackground.frame = previewHost.bounds;
-    _previewBackground.contentsGravity = kCAGravityResizeAspectFill;
-    _previewBackground.masksToBounds = YES;
     [previewHost.layer addSublayer:_previewBackground];
     [self.window.contentView addSubview:previewHost];
     _preview = [NSTextField labelWithString:@""];
     _preview.alignment = NSTextAlignmentCenter;
-    [self add:_preview frame:NSMakeRect(241,501,504,33)];
+    [self add:_preview frame:NSMakeRect(241,458,504,33)];
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return MTProfiles.shared.profiles.count; }
@@ -229,9 +219,6 @@ void MTShowColorSettings(void) {
     [_presets addItemWithTitle:@"Importer un fichier .itermcolors…"];
     [_presets selectItemAtIndex:index];
     for (NSColorWell *well in _wells) well.color = [palette color:well.tag];
-    _imageName.stringValue = _profile.imagePath.lastPathComponent ?: @"Aucune";
-    _imageName.toolTip = _profile.imagePath;
-    _removeImage.enabled = _profile.imagePath.length > 0;
     _opacity.integerValue = _profile.backgroundOpacity;
     _previewBackground.backgroundColor = [palette color:MTBackground].CGColor;
     [self refreshPreviewBackground];
@@ -249,10 +236,8 @@ void MTShowColorSettings(void) {
 
 - (void)refreshPreviewBackground {
     _percentage.stringValue = [NSString stringWithFormat:@"%ld %%", (long)_profile.backgroundOpacity];
-    _previewImage = _profile.backgroundOpacity ? [MTBackgroundImage imageAtPath:_profile.imagePath] : nil;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    _previewBackground.contents = (__bridge id)_previewImage.pixels;
     _previewBackground.opacity = _profile.backgroundOpacity / 100.0;
     [CATransaction commit];
 }
@@ -265,32 +250,6 @@ void MTShowColorSettings(void) {
     if (slider.trackingMouse)
         [NSNotificationCenter.defaultCenter postNotificationName:MTBackgroundChanged object:_profile];
     else [MTProfiles.shared save];
-}
-
-- (void)chooseImage:(id)sender {
-    NSOpenPanel *panel = NSOpenPanel.openPanel;
-    panel.allowedContentTypes = @[UTTypeImage];
-    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
-        if (response != NSModalResponseOK) return;
-        NSString *path = panel.URL.URLByResolvingSymlinksInPath.path;
-        MTBackgroundImage *image = [MTBackgroundImage imageAtPath:path];
-        if (!image) {
-            NSAlert *alert = [NSAlert new];
-            alert.messageText = @"Impossible de lire cette image.";
-            [alert beginSheetModalForWindow:self.window completionHandler:nil];
-            return;
-        }
-        self->_profile.imagePath = path;
-        self->_previewImage = image;
-        [MTProfiles.shared save];
-        [self reload];
-    }];
-}
-
-- (void)removeImage:(id)sender {
-    _profile.imagePath = nil;
-    [MTProfiles.shared save];
-    [self reload];
 }
 
 - (void)controlTextDidEndEditing:(NSNotification *)note {

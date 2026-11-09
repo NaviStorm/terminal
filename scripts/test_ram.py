@@ -13,9 +13,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("application", nargs="?", type=Path, default=Path("/Applications/mTerm.app"),
                         help="bundle à mesurer (par défaut : /Applications/mTerm.app)")
-    source = parser.parse_args().application.resolve()
+    parser.add_argument("--profil", metavar="NOM", help="profil enregistré à utiliser (sinon : profil par défaut)")
+    args = parser.parse_args()
+    source = args.application.resolve()
     info = source / "Contents/Info.plist"
-    if not info.is_file() or plistlib.loads(info.read_bytes()).get("CFBundleExecutable") != "mTerm":
+    metadata = plistlib.loads(info.read_bytes()) if info.is_file() else {}
+    if metadata.get("CFBundleExecutable") != "mTerm" or not metadata.get("CFBundleIdentifier"):
         parser.error(f"Application mTerm introuvable : {source}")
 
     probe = Path(__file__).resolve().with_name("test_ram_probe.m")
@@ -30,8 +33,9 @@ def main():
                         bundle / "Contents/Info.plist"], check=True)
         subprocess.run(["codesign", "--force", "--sign", "-", bundle], check=True)
         try:
-            subprocess.run([bundle / "Contents/MacOS/mTerm"], check=True, timeout=75,
-                           env={**os.environ, "DYLD_INSERT_LIBRARIES": str(library), "SHELL": "/bin/zsh"})
+            env = {**os.environ, "DYLD_INSERT_LIBRARIES": str(library), "SHELL": "/bin/zsh",
+                   "MTERM_TEST_SOURCE": metadata["CFBundleIdentifier"], "MTERM_TEST_PROFILE": args.profil or ""}
+            subprocess.run([bundle / "Contents/MacOS/mTerm"], check=True, timeout=75, env=env)
         finally:
             subprocess.run(["defaults", "delete", identifier], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

@@ -17,19 +17,11 @@ enum { MTPaletteReference = 0x1000000 };
 - (NSDictionary<NSString *, MTPalette *> *)importURL:(NSURL *)url error:(NSError **)error;
 @end
 
-// Une miniature décodée est partagée tant qu'une vue l'utilise.
-@interface MTBackgroundImage : NSObject
-@property(readonly) CGImageRef pixels;
-@property(readonly) NSString *path;
-+ (instancetype)imageAtPath:(NSString *)path;
-@end
-
 @interface MTProfile : NSObject
 @property(copy) NSString *name;
 @property(readonly) NSString *identifier;
 @property(strong) MTPalette *light, *dark;
 @property BOOL separate;
-@property(copy) NSString *imagePath;
 @property NSInteger backgroundOpacity; // En pourcentage.
 - (MTPalette *)paletteForAppearance:(NSAppearance *)appearance;
 @end
