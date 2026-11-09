@@ -147,6 +147,7 @@ static char tabOrderContext;
     [bar addItemWithTitle:@"Session" action:nil keyEquivalent:@""].submenu = session;
     [session addItemWithTitle:@"Nouvelle fenêtre" action:@selector(newWindow:) keyEquivalent:@"n"].target = self;
     [session addItemWithTitle:@"Nouvel onglet" action:@selector(newTab:) keyEquivalent:@"t"].target = self;
+    [session addItem:NSMenuItem.separatorItem];
     [session addItemWithTitle:@"Scinder verticalement" action:@selector(splitVertically:) keyEquivalent:@"d"].target = self;
     NSMenuItem *horizontal = [session addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
     horizontal.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
@@ -161,6 +162,7 @@ static char tabOrderContext;
         item.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
         item.target = self;
     }
+    [session addItem:NSMenuItem.separatorItem];
     [session addItemWithTitle:@"Fermer" action:@selector(closeSession:) keyEquivalent:@"w"].target = self;
     NSMenu *edit = [[NSMenu alloc] initWithTitle:@"Édition"];
     [bar addItemWithTitle:@"Édition" action:nil keyEquivalent:@""].submenu = edit;
