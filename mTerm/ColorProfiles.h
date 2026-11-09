@@ -40,4 +40,5 @@ extern NSNotificationName const MTBackgroundChanged;
 - (void)save;
 @end
 
+extern NSString *const MTFoldOnTitlebarDoubleClick;
 void MTShowColorSettings(void);

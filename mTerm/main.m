@@ -31,11 +31,87 @@ static char tabOrderContext;
 
 @interface MTTerminalWindow : NSWindow
 @property(nonatomic,readonly) NSView *sessionHost;
+@property(nonatomic,readonly) BOOL folded;
+- (void)restoreFoldedWindow;
 - (void)prepareSessionHost;
 - (void)observeTabOrder;
 @end
 
-@implementation MTTerminalWindow
+@implementation MTTerminalWindow {
+    NSLayoutConstraint *_hostBottom, *_fixedHostHeight;
+    CGFloat _expandedHeight;
+    NSSize _expandedMinimum, _expandedMaximum;
+    __weak NSView *_foldedResponder;
+    BOOL _consumeMouseUp;
+}
+
+- (void)foldWindow {
+    NSRect frame = self.frame;
+    _expandedHeight = NSHeight(frame);
+    _expandedMinimum = self.minSize;
+    _expandedMaximum = self.maxSize;
+    _foldedResponder = [self.firstResponder isKindOfClass:NSView.class] ? (NSView *)self.firstResponder : nil;
+    _folded = YES;
+    _fixedHostHeight = [_sessionHost.heightAnchor constraintEqualToConstant:NSHeight(_sessionHost.bounds)];
+    _hostBottom.active = NO;
+    _fixedHostHeight.active = YES;
+    _sessionHost.hidden = YES;
+    // Le bord supérieur reste au même endroit et la grille garde sa hauteur.
+    CGFloat height = NSHeight(frame) - NSHeight(self.contentLayoutRect);
+    frame.origin.y = NSMaxY(frame) - height;
+    frame.size.height = height;
+    self.minSize = NSMakeSize(_expandedMinimum.width, height);
+    self.maxSize = NSMakeSize(_expandedMaximum.width, height);
+    [self setFrame:frame display:YES];
+}
+
+- (void)restoreFoldedWindow {
+    if (!_folded) return;
+    NSRect frame = self.frame;
+    frame.origin.y = NSMaxY(frame) - _expandedHeight;
+    frame.size.height = _expandedHeight;
+    self.maxSize = _expandedMaximum;
+    [self setFrame:frame display:NO];
+    self.minSize = _expandedMinimum;
+    _fixedHostHeight.active = NO;
+    _fixedHostHeight = nil;
+    _hostBottom.active = YES;
+    _sessionHost.hidden = NO;
+    _folded = NO;
+    [self.contentView layoutSubtreeIfNeeded];
+    if (_foldedResponder.window == self) [self makeFirstResponder:_foldedResponder];
+    _foldedResponder = nil;
+}
+
+- (void)sendEvent:(NSEvent *)event {
+    if (event.type == NSEventTypeLeftMouseUp && _consumeMouseUp) {
+        _consumeMouseUp = NO;
+        return;
+    }
+    if (event.type == NSEventTypeLeftMouseDown) _consumeMouseUp = NO;
+    if (event.type == NSEventTypeLeftMouseDown && event.clickCount == 2 &&
+        !(self.styleMask & NSWindowStyleMaskFullScreen) &&
+        [NSUserDefaults.standardUserDefaults boolForKey:MTFoldOnTitlebarDoubleClick]) {
+        NSPoint point = event.locationInWindow;
+        NSRect title = [NSWindow contentRectForFrameRect:NSMakeRect(0,0,NSWidth(self.frame),NSHeight(self.frame))
+                                                styleMask:NSWindowStyleMaskTitled];
+        if (point.y >= NSMaxY(title)) {
+            NSView *frameView = self.contentView.superview;
+            NSView *hit = [frameView hitTest:[frameView convertPoint:point fromView:nil]];
+            while (hit && ![hit isKindOfClass:NSControl.class]) hit = hit.superview;
+            if (!hit || [hit isKindOfClass:NSTextField.class]) {
+                if (_folded) [self restoreFoldedWindow]; else [self foldWindow];
+                _consumeMouseUp = YES;
+                return;
+            }
+        }
+    }
+    [super sendEvent:event];
+}
+
+- (void)foldPreferenceChanged:(NSNotification *)note {
+    if (![NSUserDefaults.standardUserDefaults boolForKey:MTFoldOnTitlebarDoubleClick]) [self restoreFoldedWindow];
+}
 - (void)prepareSessionHost {
     NSView *root = self.contentView;
     NSLayoutGuide *guide = self.contentLayoutGuide;
@@ -46,9 +122,12 @@ static char tabOrderContext;
     _sessionHost.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:bar];
     [root addSubview:_sessionHost];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(foldPreferenceChanged:)
+                                                 name:MTFoldOnTitlebarDoubleClick object:nil];
+    _hostBottom = [_sessionHost.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor];
     [NSLayoutConstraint activateConstraints:@[
         [_sessionHost.topAnchor constraintEqualToAnchor:guide.topAnchor],
-        [_sessionHost.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor],
+        _hostBottom,
         [_sessionHost.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
         [_sessionHost.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
         [bar.topAnchor constraintEqualToAnchor:root.topAnchor],
@@ -250,6 +329,7 @@ static BOOL HasTransparentPane(NSView *view) {
 }
 
 - (void)openAlongside:(NSWindow *)parent movingTerminal:(TerminalView *)existing {
+    [(MTTerminalWindow *)parent restoreFoldedWindow];
     NSRect frame = parent ? [parent contentRectForFrameRect:parent.frame] : NSMakeRect(0,0,800,480);
     MTTerminalWindow *window = [[MTTerminalWindow alloc] initWithContentRect:frame
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView
@@ -499,7 +579,7 @@ static BOOL HasTransparentPane(NSView *view) {
 - (void)newWindowForTab:(id)sender { [self newTab:sender]; }
 
 - (void)saveNormalFrame:(NSWindow *)window {
-    if (![_windows containsObject:window] || window.miniaturized ||
+    if (![_windows containsObject:window] || window.miniaturized || ((MTTerminalWindow *)window).folded ||
         (window.styleMask & NSWindowStyleMaskFullScreen) ||
         [_fullScreenTransitions containsObject:window]) return;
     [window saveFrameUsingName:terminalFrameName];
@@ -516,6 +596,7 @@ static BOOL HasTransparentPane(NSView *view) {
 - (void)windowDidResize:(NSNotification *)note { [self windowGeometryChanged:note]; }
 
 - (void)windowWillEnterFullScreen:(NSNotification *)note {
+    [note.object restoreFoldedWindow];
     [self saveNormalFrame:note.object];
     [_fullScreenTransitions addObject:note.object];
 }

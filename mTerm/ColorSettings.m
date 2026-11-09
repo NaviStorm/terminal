@@ -2,6 +2,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+NSString *const MTFoldOnTitlebarDoubleClick = @"FoldOnTitlebarDoubleClick";
+
 @interface MTSettingsCanvas : NSView
 @end
 @implementation MTSettingsCanvas
@@ -32,6 +34,7 @@ void MTShowColorSettings(void) {
 }
 
 @implementation MTColorSettings {
+    MTSettingsCanvas *_profilesPage, *_generalPage;
     MTProfile *_profile;
     NSTableView *_list;
     MTOpacitySlider *_opacity;
@@ -47,7 +50,7 @@ void MTShowColorSettings(void) {
 
 - (void)add:(NSView *)view frame:(NSRect)frame {
     view.frame = frame;
-    [self.window.contentView addSubview:view];
+    [_profilesPage addSubview:view];
 }
 
 - (void)label:(NSString *)title x:(CGFloat)x y:(CGFloat)y width:(CGFloat)width {
@@ -61,20 +64,50 @@ void MTShowColorSettings(void) {
 }
 
 - (instancetype)init {
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,770,522)
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,770,566)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:YES];
     if ((self = [super initWithWindow:window])) {
-        window.title = @"Réglages — Profils de couleurs";
+        window.title = @"Réglages";
         window.releasedWhenClosed = NO;
         window.tabbingMode = NSWindowTabbingModeDisallowed;
         window.delegate = self;
         window.contentView = [[MTSettingsCanvas alloc] initWithFrame:window.contentView.bounds];
         _profile = MTProfiles.shared.defaultProfile;
-        [self buildControls];
-        [self reload];
+        NSSegmentedControl *sections = [NSSegmentedControl segmentedControlWithLabels:@[@"Général", @"Profils de couleurs"]
+            trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeSection:)];
+        [sections sizeToFit];
+        [sections setFrameOrigin:NSMakePoint(round((770 - NSWidth(sections.frame)) / 2), 10)];
+        [window.contentView addSubview:sections];
+        sections.selectedSegment = 0;
+        _generalPage = [[MTSettingsCanvas alloc] initWithFrame:NSMakeRect(0,44,770,522)];
+        NSButton *fold = [NSButton checkboxWithTitle:@"Replier la fenêtre par double-clic sur la barre de titre"
+                                               target:self action:@selector(changeFoldPreference:)];
+        fold.state = [NSUserDefaults.standardUserDefaults boolForKey:MTFoldOnTitlebarDoubleClick];
+        [fold sizeToFit];
+        [fold setFrameOrigin:NSMakePoint(24,20)];
+        [_generalPage addSubview:fold];
+        [window.contentView addSubview:_generalPage];
         [window center];
     }
     return self;
+}
+
+- (void)changeFoldPreference:(NSButton *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.state == NSControlStateValueOn forKey:MTFoldOnTitlebarDoubleClick];
+    [NSNotificationCenter.defaultCenter postNotificationName:MTFoldOnTitlebarDoubleClick object:nil];
+}
+
+- (void)changeSection:(NSSegmentedControl *)sender {
+    [self.window makeFirstResponder:nil];
+    BOOL general = sender.selectedSegment == 0;
+    if (!general && !_profilesPage) {
+        _profilesPage = [[MTSettingsCanvas alloc] initWithFrame:_generalPage.frame];
+        [self.window.contentView addSubview:_profilesPage];
+        [self buildControls];
+        [self reload];
+    }
+    _generalPage.hidden = !general;
+    _profilesPage.hidden = general;
 }
 
 - (void)buildControls {
@@ -161,7 +194,7 @@ void MTShowColorSettings(void) {
     _previewBackground = [CALayer layer];
     _previewBackground.frame = previewHost.bounds;
     [previewHost.layer addSublayer:_previewBackground];
-    [self.window.contentView addSubview:previewHost];
+    [_profilesPage addSubview:previewHost];
     _preview = [NSTextField labelWithString:@""];
     _preview.alignment = NSTextAlignmentCenter;
     [self add:_preview frame:NSMakeRect(241,458,504,33)];
