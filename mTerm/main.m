@@ -139,10 +139,42 @@ static char tabOrderContext;
     [window observeTabOrder];
 }
 
+- (NSMenu *)tabSelectionMenuForWindow:(NSWindow *)current {
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Sélection"];
+    NSMutableSet *remaining = [_windows mutableCopy];
+    // Le groupe courant vient en premier, puis les autres fenêtres par ordre de création.
+    NSArray *ordered = [_windows sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"windowNumber" ascending:YES]]];
+    for (NSWindow *window in [@[current] arrayByAddingObjectsFromArray:ordered]) {
+        if (![remaining containsObject:window]) continue;
+        if (menu.numberOfItems) [menu addItem:NSMenuItem.separatorItem];
+        for (NSWindow *tab in window.tabGroup.windows ?: @[window]) {
+            if (![remaining containsObject:tab]) continue;
+            NSMenuItem *item = [menu addItemWithTitle:tab.tab.title action:@selector(activateTab:) keyEquivalent:@""];
+            item.target = self;
+            item.representedObject = tab;
+            item.state = tab == current ? NSControlStateValueOn : NSControlStateValueOff;
+            [remaining removeObject:tab];
+        }
+    }
+    return menu;
+}
+
+- (void)activateTab:(NSMenuItem *)sender {
+    NSWindow *tab = sender.representedObject;
+    if (![_windows containsObject:tab]) return;
+    NSWindowTabGroup *group = tab.tabGroup;
+    NSWindow *visible = group.selectedWindow ?: tab;
+    if (visible.miniaturized) [visible deminiaturize:nil];
+    group.selectedWindow = tab;
+    [tab makeKeyAndOrderFront:nil];
+}
+
 - (NSMenu *)menuForTerminal:(TerminalView *)terminal {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Session"];
     [menu addItemWithTitle:@"Nouvelle fenêtre" action:@selector(newWindow:) keyEquivalent:@"n"].target = self;
     [menu addItemWithTitle:@"Nouvel onglet" action:@selector(newTab:) keyEquivalent:@"t"].target = self;
+    NSMenu *selection = [self tabSelectionMenuForWindow:terminal.window];
+    [menu addItemWithTitle:selection.title action:nil keyEquivalent:@""].submenu = selection;
     [menu addItem:NSMenuItem.separatorItem];
     [menu addItemWithTitle:@"Scinder verticalement" action:@selector(splitVertically:) keyEquivalent:@"d"].target = self;
     NSMenuItem *horizontal = [menu addItemWithTitle:@"Scinder horizontalement" action:@selector(splitHorizontally:) keyEquivalent:@"d"];
